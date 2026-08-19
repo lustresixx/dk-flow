@@ -32,6 +32,8 @@ export interface StateOutcome {
   steps: StepOutcome[]
   /** Optional supervisor checkpoint note for the state. */
   supervisorNote?: string
+  /** Optional supervisor score for the state (1–10, scoringEnabled). */
+  supervisorScore?: number
   finishedAt: string
 }
 
@@ -128,11 +130,12 @@ export interface StepExecutor {
   supervisorAdvice?(input: {
     supervisorName: string
     supervisorSystemPrompt: string
+    workflowName: string
     ctx: StepContext
     stateOutcome: StepOutcome[]
     parent: Agent
     signal: AbortSignal
-  }): Promise<string | null>
+  }): Promise<{ advice: string; score: number | null } | null>
 }
 
 /** Options controlling one engine run. */

@@ -52,7 +52,7 @@ function renderRun(state: RunState): string {
   if (state.error) lines.push(`错误: ${state.error}`)
   for (const outcome of state.stateOutcomes) {
     lines.push(
-      `  状态「${outcome.state}」→ ${outcome.verdict.verdict}${outcome.verdict.rationale ? `：${truncateLine(outcome.verdict.rationale, 120)}` : ''}`,
+      `  状态「${outcome.state}」→ ${outcome.verdict.verdict}${outcome.supervisorScore !== undefined ? ` [评分 ${outcome.supervisorScore}]` : ''}${outcome.verdict.rationale ? `：${truncateLine(outcome.verdict.rationale, 120)}` : ''}`,
     )
     for (const step of outcome.steps) {
       lines.push(`    · ${step.step}${step.agent ? ` [${step.agent}]` : ''}${step.verdict ? ` → ${step.verdict.verdict}` : ''}`)

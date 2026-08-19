@@ -102,12 +102,21 @@ export function buildSupervisorPrompt(input: {
   state: string
   requirements: string
   stateOutcome: StepOutcome[]
+  experience?: string
+  scoringEnabled?: boolean
 }): string {
   const evidence = input.stateOutcome.map(summarizeStepEvidence).join('\n\n---\n\n')
+  const scoring = input.scoringEnabled
+    ? '\n输出要求：单独输出一行评分标签 `<supervisor-score>{"score": 1到10的整数, "advice": "检查点结论"}</supervisor-score>`，score 依据目标达成度、证据充分性和风险收敛程度。'
+    : ''
   return [
     `## 阶段检查：${input.state}`,
     input.requirements ? `本次需求：${input.requirements}` : '',
+    input.experience ? `## 历史经验（最近同类工作流的检查点结论，仅供参考）\n${input.experience}` : '',
     `该阶段已完成的步骤产出如下：\n${evidence}`,
     '请给出：当前阶段状态、已满足条件、待满足条件、建议的下一步，以及是否需要人工介入（需要时说明决策问题与可选项）。',
-  ].filter((section) => section !== '').join('\n\n')
+    scoring,
+  ]
+    .filter((section) => section !== '')
+    .join('\n\n')
 }

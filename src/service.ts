@@ -26,6 +26,7 @@ import { buildStepPrompt, buildSupervisorPrompt, SUMMARY_BUDGET, truncate } from
 import { createRunState, runStateMachine } from './engine/runner.js'
 import { EngineError, type EngineRunOptions, type RunResult, type RunState, type StepExecutor } from './engine/types.js'
 import { captureGitSnapshot, saveGitSnapshot } from './store/git-baseline.js'
+import { appendExperience, loadRecentExperience, renderExperience } from './store/experience.js'
 import { workspaceRoot } from './store/paths.js'
 import { appendAudit, listRunStates, loadRunState, saveRunState } from './store/run-store.js'
 import { deleteWorkflow, listWorkflows, loadWorkflow, saveWorkflow, type WorkflowEntry } from './store/workflow-store.js'
@@ -75,6 +76,46 @@ const VERDICT_OUTPUT_SCHEMA: ObjectJsonSchema = {
   required: ['verdict'],
 }
 assertObjectJsonSchema(VERDICT_OUTPUT_SCHEMA)
+
+/** Supervisor score schema enforced when the provider supports structured output. */
+const SCORE_OUTPUT_SCHEMA: ObjectJsonSchema = {
+  type: 'object',
+  properties: {
+    score: { type: 'number' },
+    advice: { type: 'string' },
+  },
+  required: ['score', 'advice'],
+}
+assertObjectJsonSchema(SCORE_OUTPUT_SCHEMA)
+
+/** Extract a `<supervisor-score>{…}</supervisor-score>` payload from text. */
+function extractScore(text: string): { score: number | null; advice: string } {
+  const tag = /<supervisor-score>([\s\S]*?)<\/supervisor-score>/i.exec(text)
+  if (tag?.[1]) {
+    try {
+      const parsed = JSON.parse(tag[1]) as { score?: unknown; advice?: unknown }
+      const raw = typeof parsed.score === 'number' ? parsed.score : NaN
+      const score = Number.isFinite(raw) ? Math.min(10, Math.max(1, Math.round(raw))) : null
+      return { score, advice: typeof parsed.advice === 'string' ? parsed.advice : text }
+    } catch {
+      // Fall through to whole-text handling.
+    }
+  }
+  const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(text)
+  if (fenced?.[1]) {
+    try {
+      const parsed = JSON.parse(fenced[1]) as { score?: unknown; advice?: unknown }
+      const raw = typeof parsed.score === 'number' ? parsed.score : NaN
+      if (Number.isFinite(raw)) {
+        const score = Math.min(10, Math.max(1, Math.round(raw)))
+        return { score, advice: typeof parsed.advice === 'string' ? parsed.advice : text }
+      }
+    } catch {
+      // Not JSON; keep the text as advice.
+    }
+  }
+  return { score: null, advice: text }
+}
 
 /** ACE catalog tool names mapped onto DSH tool names. */
 const ACE_TOOL_MAP: Record<string, string> = {
@@ -553,24 +594,55 @@ export default class AceHarnessService extends Service {
       async supervisorAdvice(input) {
         const supervisorDef = await service.agentByName(input.supervisorName)
         if (!supervisorDef) return null
+        const experience = await loadRecentExperience(workspace, service.config.runDirName, 5)
         const promptText =
           `## 角色设定\n${supervisorDef.systemPrompt}\n\n` +
           buildSupervisorPrompt({
             state: input.ctx.state,
             requirements: input.ctx.requirements,
             stateOutcome: input.stateOutcome,
+            experience: renderExperience(experience),
+            scoringEnabled: true,
           })
+        const providerCaps = service.ctx.subagents.getProvider(service.config.subagentProvider)?.capabilities
+        const wantsSchema = providerCaps?.outputSchema === true
         const run = await service.ctx.subagents.start(service.config.subagentProvider, {
           label: `${input.ctx.state}/supervisor-checkpoint`,
           prompt: [{ type: 'text', text: promptText }],
           parent: input.parent,
           signal: input.signal,
           agentOptions: service.config.model ? { model: service.config.model } : undefined,
+          outputSchema: wantsSchema ? SCORE_OUTPUT_SCHEMA : undefined,
         })
         try {
           const childResult = await run.result
           const text = toText(childResult.output)
-          return text === '' ? null : truncate(text, SUMMARY_BUDGET)
+          let score: number | null = null
+          let advice = truncate(text, SUMMARY_BUDGET)
+          if (childResult.structured !== undefined) {
+            const structured = childResult.structured as { score?: unknown; advice?: unknown }
+            const raw = typeof structured.score === 'number' ? structured.score : NaN
+            score = Number.isFinite(raw) ? Math.min(10, Math.max(1, Math.round(raw))) : null
+            advice =
+              typeof structured.advice === 'string' && structured.advice.trim() !== ''
+                ? truncate(structured.advice, SUMMARY_BUDGET)
+                : advice
+          } else {
+            const extracted = extractScore(text)
+            score = extracted.score
+            advice = truncate(extracted.advice || '(无检查点结论)', SUMMARY_BUDGET)
+          }
+          const entry = {
+            workflowName: input.workflowName,
+            state: input.ctx.state,
+            score,
+            advice,
+            at: new Date().toISOString(),
+          }
+          await appendExperience(workspace, service.config.runDirName, entry).catch(() => {
+            // Experience persistence is best-effort; it must not fail the run.
+          })
+          return { advice, score }
         } finally {
           run.dispose()
         }

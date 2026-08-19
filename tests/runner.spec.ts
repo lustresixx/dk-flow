@@ -393,6 +393,42 @@ describe('runStateMachine', () => {
     expect(calls).toContain('主/汇总')
   })
 
+  it('records supervisor scores and notes on state outcomes', async () => {
+    const config = redBlueConfig()
+    const executor: StepExecutor = {
+      async runAgentStep() {
+        return { outputSummary: '', verdict: V('pass') }
+      },
+      async runSubworkflowStep() {
+        return { outcome: 'completed', verdict: V('pass') }
+      },
+      async supervisorAdvice(input) {
+        if (input.ctx.state === '方案') return { advice: '方案证据充分', score: 8 }
+        return { advice: '', score: null }
+      },
+    }
+    const options: EngineRunOptions = {
+      config,
+      runId: 'run-score',
+      configFile: 'red-blue.yaml',
+      inputs: {},
+      parent: fakeParent,
+      signal: new AbortController().signal,
+      executor,
+      persist: async () => {},
+      load: async () => null,
+      resolveSubworkflow: async () => config,
+      askHumanTransition: async ({ candidates }) => candidates[0] ?? '',
+    }
+    const result = await runStateMachine(options)
+    const plan = result.stateOutcomes.find((outcome) => outcome.state === '方案')!
+    expect(plan.supervisorScore).toBe(8)
+    expect(plan.supervisorNote).toBe('方案证据充分')
+    const exec = result.stateOutcomes.find((outcome) => outcome.state === '执行')!
+    expect(exec.supervisorScore).toBeUndefined()
+    expect(exec.supervisorNote).toBeUndefined()
+  })
+
   it('runs parallel segments concurrently', async () => {
     const config: WorkflowConfig = {
       workflow: {

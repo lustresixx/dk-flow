@@ -413,15 +413,21 @@ async function executeState(
   // Optional supervisor checkpoint advice after the state settles.
   const supervisor = options.config.workflow.supervisor
   if (supervisor && supervisor.enabled && !machineState.isFinal && options.executor.supervisorAdvice) {
-    const note = await options.executor.supervisorAdvice({
+    const result = await options.executor.supervisorAdvice({
       supervisorName: supervisor.agent ?? 'default-supervisor',
       supervisorSystemPrompt: '',
+      workflowName: options.config.workflow.name,
       ctx: { ...context, priorStepEvidence: buildStepEvidence(completedSteps) },
       stateOutcome: completedSteps,
       parent: options.parent,
       signal: options.signal,
     })
-    if (note) stateOutcome.supervisorNote = note
+    if (result) {
+      stateOutcome.supervisorNote = result.advice === '' ? undefined : result.advice
+      if (supervisor.scoringEnabled !== false) {
+        stateOutcome.supervisorScore = result.score ?? undefined
+      }
+    }
   }
 
   return stateOutcome

@@ -471,6 +471,7 @@ function RunCard(props: {
         {run.states.map((state) => (
           <li key={state.state} className={styles.runState} data-verdict={state.verdict}>
             {state.state} → {state.verdict}
+            {state.supervisorScore !== null ? ` · 评分 ${state.supervisorScore}` : ''}
           </li>
         ))}
       </ol>

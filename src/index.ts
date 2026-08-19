@@ -185,6 +185,8 @@ export function apply(ctx: Context, config: Config): void {
               states: run.stateOutcomes.map((outcome) => ({
                 state: outcome.state,
                 verdict: outcome.verdict.verdict,
+                supervisorScore: outcome.supervisorScore ?? null,
+                supervisorNote: outcome.supervisorNote ?? null,
                 steps: outcome.steps.map((step) => ({
                   step: step.step,
                   agent: step.agent,
