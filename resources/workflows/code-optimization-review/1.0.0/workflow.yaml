@@ -1,0 +1,186 @@
+workflow:
+  name: 代码优化评审
+  description: 七角色接力完成一次代码优化：方案、调研、对抗、需求、实现、测试、终审，成功/失败由 AI 判断
+  mode: state-machine
+  maxTransitions: 40
+  supervisor:
+    enabled: true
+    agent: default-supervisor
+    stageReviewEnabled: true
+    checkpointAdviceEnabled: true
+    scoringEnabled: true
+    experienceEnabled: true
+  states:
+    - name: 提出方案
+      description: 分析项目现状，形成优化方案（目标、范围、风险与验收标准）
+      isInitial: true
+      isFinal: false
+      maxSelfTransitions: 3
+      position: { x: 40, y: 120 }
+      steps:
+        - name: 优化方案设计
+          agent: architect
+          role: defender
+          task: |
+            基于本次优化目标，阅读相关代码，形成一份可执行的优化方案：
+            - 现状分析：定位热点、瓶颈与结构性问题的证据（文件、函数、数据）
+            - 目标状态：量化目标（性能指标、可维护性）与验收标准
+            - 方案选项：至少两个可选方案，比较收益、成本、风险，给出推荐
+            - 迁移步骤：分步实施顺序、回滚点与验证方式
+            完成后给出方案文档与结论标签。
+      transitions:
+        - { to: 资料调研, condition: { verdict: success }, priority: 10, label: 方案成型 }
+        - { to: 提出方案, condition: { verdict: fail }, priority: 20, label: 方案不足重做 }
+    - name: 资料调研
+      description: 检索相关最佳实践、类似方案与可复现证据，为方案补充事实基础
+      isInitial: false
+      isFinal: false
+      maxSelfTransitions: 3
+      position: { x: 300, y: 120 }
+      steps:
+        - name: 资料检索与比较
+          agent: researcher
+          role: defender
+          task: |
+            围绕已提出的优化方案做资料调研：
+            - 检索相关技术的最佳实践、官方文档与可复现案例（优先一手资料）
+            - 比较同类方案：收益、成本、风险、成熟度，给出比较表
+            - 为关键结论标注来源与证据强度；区分事实、推断与建议
+            - 指出方案中与调研结论冲突或证据不足的部分
+            完成后给出调研报告与结论标签。
+      transitions:
+        - { to: 对抗挑战, condition: { verdict: success }, priority: 10, label: 调研充分 }
+        - { to: 资料调研, condition: { verdict: fail }, priority: 20, label: 资料不足补充 }
+    - name: 对抗挑战
+      description: 以攻击者视角挑战方案与调研结论，输出风险与反例清单
+      isInitial: false
+      isFinal: false
+      maxSelfTransitions: 3
+      position: { x: 560, y: 120 }
+      steps:
+        - name: 方案对抗挑战
+          agent: solution-breaker
+          role: attacker
+          task: |
+            只基于「提出方案」和「资料调研」的证据（只读，不要重做方案或调研）：
+            - 从边界、异常、时序、兼容性、性能反例、维护成本等角度构造具体挑战
+            - 每条挑战给出：场景、触发条件、影响、现有证据与建议的验证动作
+            - 区分必须在敲定需求前闭环的风险与可跟踪的后续项
+            完成后给出挑战报告与结论标签。
+      transitions:
+        - { to: 敲定需求, condition: { verdict: success }, priority: 10, label: 挑战完成 }
+        - { to: 提出方案, condition: { verdict: fail }, priority: 20, label: 方案经不起挑战 }
+    - name: 敲定需求
+      description: 综合方案、调研与挑战，敲定需求清单、优先级与验收标准
+      isInitial: false
+      isFinal: false
+      maxSelfTransitions: 3
+      position: { x: 820, y: 120 }
+      steps:
+        - name: 需求敲定
+          agent: product-manager
+          role: defender
+          task: |
+            综合「提出方案」「资料调研」「对抗挑战」三份产出，敲定本次优化的需求：
+            - 需求清单：每条含目标价值、行为/边界、异常规则与可验证的验收标准
+            - 明确本期范围与不做的事（范围边界）；按影响/成本/风险排序
+            - 把挑战清单逐条裁决：采纳、驳回（给出理由）或转为跟踪项
+            - 输出开发者可直接实施、测试者可直接验收的需求说明
+            完成后给出需求说明与结论标签。
+      transitions:
+        - { to: 代码优化, condition: { verdict: success }, priority: 10, label: 需求敲定 }
+        - { to: 提出方案, condition: { verdict: fail }, priority: 20, label: 需求无法收敛 }
+    - name: 代码优化
+      description: 按敲定需求实施代码优化，保持改动聚焦并留下验证证据
+      isInitial: false
+      isFinal: false
+      maxSelfTransitions: 3
+      position: { x: 1080, y: 120 }
+      steps:
+        - name: 实施优化
+          agent: developer
+          role: defender
+          task: |
+            严格按敲定的需求实施代码优化：
+            - 改动聚焦：只做需求范围内的修改，不顺手重构无关代码
+            - 每处关键改动说明动机、对应需求条目与预期效果
+            - 补充或调整测试，执行静态检查与相关测试并记录结果
+            - 记录优化前后的对比证据（测试结果、耗时/指标等）
+            完成后给出实现说明与结论标签。
+      transitions:
+        - { to: 测试验证, condition: { verdict: success }, priority: 10, label: 实现完成 }
+        - { to: 代码优化, condition: { verdict: fail }, priority: 20, label: 实现未达成重做 }
+    - name: 测试验证
+      description: 验证优化效果、回归与边界场景，产出测试证据
+      isInitial: false
+      isFinal: false
+      maxSelfTransitions: 3
+      position: { x: 40, y: 420 }
+      steps:
+        - name: 测试与回归
+          agent: tester
+          role: defender
+          task: |
+            对照敲定需求的验收标准验证本次优化：
+            - 逐条验收：执行对应测试与验证动作，记录通过/失败证据
+            - 回归验证：确认未破坏既有行为；覆盖边界与异常场景
+            - 若验收标准包含性能指标，给出优化前后对比数据
+            - 汇总残余风险与未覆盖场景
+            完成后给出测试报告与结论标签。
+      transitions:
+        - { to: 最终评审, condition: { verdict: success }, priority: 10, label: 验证通过 }
+        - { to: 代码优化, condition: { verdict: fail }, priority: 20, label: 验证失败回修 }
+    - name: 最终评审
+      description: 对照需求与测试证据做最终裁决
+      isInitial: false
+      isFinal: false
+      maxSelfTransitions: 2
+      position: { x: 300, y: 420 }
+      steps:
+        - name: 需求最终评审
+          agent: code-judge
+          role: judge
+          task: |
+            对照敲定的需求清单与测试证据，做最终评审（只评估证据，不重做实现）：
+            - 逐条核对需求与验收证据，检查实现是否偏离敲定需求
+            - 评估残余风险是否在可接受范围
+            - 输出 verdict：success（可交付）或 fail（必须回修，说明缺口）
+            完成后给出评审结论与 verdict 标签。
+      transitions:
+        - { to: 交付汇总, condition: { verdict: success }, priority: 10, label: 评审通过 }
+        - { to: 代码优化, condition: { verdict: fail }, priority: 20, label: 评审不通过回修 }
+    - name: 交付汇总
+      description: 汇总本次优化的全部产出、验证证据与后续事项
+      isInitial: false
+      isFinal: true
+      position: { x: 560, y: 420 }
+      steps:
+        - name: 交付文档
+          agent: documentation-writer
+          role: defender
+          task: |
+            汇总本次代码优化的完整交付：
+            - 需求背景、敲定需求清单与最终实现要点
+            - 测试与性能验证证据（优化前后对比）
+            - 已知限制、残余风险与后续建议
+            输出结构化的交付说明。
+      transitions: []
+context:
+  projectRoot: ""
+  workspaceMode: in-place
+  requirements: ""
+  gitBaselineEnabled: true
+  taskInput:
+    fields:
+      - id: title
+        label: 优化任务
+        type: text
+        placeholder: "例如：优化工作流引擎性能"
+      - id: description
+        label: 优化目标与约束
+        type: textarea
+        placeholder: 说明要优化的方向、量化目标、约束与验收期望
+      - id: acceptanceCriteria
+        label: 验收期望
+        type: textarea
+        placeholder: 例如：测试全绿、关键路径耗时下降 30%、给出前后对比证据

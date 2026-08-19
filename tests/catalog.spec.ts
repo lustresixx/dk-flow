@@ -20,6 +20,8 @@ describe('built-in catalog', () => {
         'stress-tester',
         'documentation-writer',
         'issue-reproducer',
+        'researcher',
+        'product-manager',
       ]),
     )
     for (const agent of agents) {
@@ -28,10 +30,16 @@ describe('built-in catalog', () => {
     }
   })
 
-  it('ships the four built-in workflow templates, all reference-consistent', async () => {
+  it('ships the five built-in workflow templates, all reference-consistent', async () => {
     const templates = await loadBuiltinTemplates()
     expect(templates.map((t) => t.id)).toEqual(
-      expect.arrayContaining(['general-red-blue-review', 'issue-fix', 'software-delivery', 'simple-script-pipeline']),
+      expect.arrayContaining([
+        'general-red-blue-review',
+        'issue-fix',
+        'software-delivery',
+        'simple-script-pipeline',
+        'code-optimization-review',
+      ]),
     )
     const agents = await loadBuiltinAgents()
     const known = new Set(agents.map((a) => a.name))
@@ -46,6 +54,29 @@ describe('built-in catalog', () => {
         expect(['success', 'fail']).toContain(transition.condition.verdict)
       }
     }
+    // The optimization review covers the full seven-role pipeline.
+    const review = templates.find((t) => t.id === 'code-optimization-review')!
+    expect(review.config.workflow.states.map((s) => s.name)).toEqual([
+      '提出方案',
+      '资料调研',
+      '对抗挑战',
+      '敲定需求',
+      '代码优化',
+      '测试验证',
+      '最终评审',
+      '交付汇总',
+    ])
+    const allSteps = review.config.workflow.states.flatMap((s) => s.steps)
+    expect(allSteps.map((s) => s.agent)).toEqual([
+      'architect',
+      'researcher',
+      'solution-breaker',
+      'product-manager',
+      'developer',
+      'tester',
+      'code-judge',
+      'documentation-writer',
+    ])
   })
 })
 

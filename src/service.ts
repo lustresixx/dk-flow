@@ -136,6 +136,8 @@ const ACE_TOOL_MAP: Record<string, string> = {
   Edit: 'edit',
   Glob: 'glob',
   Grep: 'glob',
+  WebSearch: 'web_search',
+  WebFetch: 'web_fetch',
 }
 
 /**

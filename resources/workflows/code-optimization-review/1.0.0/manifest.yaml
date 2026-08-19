@@ -1,0 +1,37 @@
+apiVersion: aceharness.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  id: code-optimization-review
+  version: 1.0.0
+  name: 代码优化评审
+  description: 七角色接力：提出方案 → 资料调研 → 对抗挑战 → 敲定需求 → 代码优化 → 测试验证 → 最终评审 → 交付汇总。全程 AI 判断成功/失败，可复用到任意项目的优化需求。
+  category: 软件研发
+  tags: [优化, 评审, 对抗, 研发闭环]
+  featured: true
+spec:
+  entrypoint: workflow.yaml
+  mode: state-machine
+  compatibility:
+    aceharness: ">=1.0.0-rc.8 <2.0.0"
+  parameters:
+    - { id: workflowName, label: 工作流名称, type: string, bind: /workflow/name, required: true, default: 代码优化评审 }
+    - { id: projectRoot, label: 项目目录, description: 待优化项目的绝对路径, type: directory, bind: /context/projectRoot, required: true }
+    - id: requirements
+      label: 优化目标
+      description: 要优化的方向、约束与验收期望（例如：提升某模块性能，保持测试全绿）
+      type: text
+      bind: /context/requirements
+      required: true
+  dependencies:
+    agents:
+      - default-supervisor
+      - architect
+      - researcher
+      - solution-breaker
+      - product-manager
+      - developer
+      - tester
+      - code-judge
+      - documentation-writer
+    skills: []
+    subworkflows: []

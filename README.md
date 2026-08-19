@@ -5,7 +5,7 @@
 - 全屏「工作流工作台」后台页面：模板 / 工作流 / 运行记录三栏，React Flow 画布拖拽节点与连线
 - 节点三种类型：**AI 步骤**（专属角色 Agent）、**脚本步骤**（node:vm 执行 JS）、**子工作流**
 - 流转只分**成功 / 失败**，由 AI 依据实际产出判断；保留旧 pass/conditional_pass YAML 兼容
-- 内置 11 个角色 Agent（supervisor / defender / attacker / judge 四队）+ 4 个模板（通用红蓝评审、缺陷定位修复、软件交付、简单脚本流水线）
+- 内置 13 个角色 Agent（supervisor / defender / attacker / judge 四队）+ 5 个模板（通用红蓝评审、缺陷定位修复、软件交付、简单脚本流水线、**代码优化评审**）
 - `/workflow` 斜杠命令 + `workflow_list` / `run_workflow` / `workflow_manage` 模型工具
 - 治理：运行持久化、断点恢复、人工决策点、supervisor 评分与经验沉淀、Git baseline、后台 job
 - ACEHarness 官方 logo 装饰界面
@@ -63,6 +63,37 @@ dsh --profile web --dump-config
 ### 成功/失败流转
 
 状态转移条件为 `{ verdict: success }` 或 `{ verdict: fail }`，由最后一个步骤的结论（AI 判断或脚本返回值）驱动；无匹配时进入人工决策。旧版 ACE 的 `pass` / `conditional_pass` YAML 仍可加载运行。
+
+## 代码优化评审工作流（七角色接力）
+
+内置模板 `code-optimization-review`：一个完整、可复用的「提出方案 → 资料调研 → 对抗挑战 → 敲定需求 → 代码优化 → 测试验证 → 最终评审 → 交付汇总」闭环，全程由 AI 判断成功/失败：
+
+| 状态 | 角色 Agent | 职责 | 失败去向 |
+|---|---|---|---|
+| 提出方案 | architect（defender） | 分析现状，形成可执行优化方案与验收标准 | 自循环重做 |
+| 资料调研 | researcher（defender） | 检索最佳实践/类似方案，标注来源与证据强度 | 自循环补充 |
+| 对抗挑战 | solution-breaker（attacker） | 攻击方案与调研，输出风险与反例清单 | 回到提出方案 |
+| 敲定需求 | product-manager（defender） | 综合三方产出敲定需求清单、范围与验收标准 | 回到提出方案 |
+| 代码优化 | developer（defender） | 按需求实施优化，记录前后对比证据 | 自循环重做 |
+| 测试验证 | tester（defender） | 逐条验收 + 回归 + 边界，产出测试证据 | 回到代码优化 |
+| 最终评审 | code-judge（judge） | 对照需求与证据终审（可交付 / 回修） | 回到代码优化 |
+| 交付汇总 | documentation-writer（defender） | 汇总需求、实现、验证证据与残余风险 | （终止） |
+
+另有 supervisor 在每个阶段后做检查点评分与经验沉淀。
+
+**复用到你自己的项目**：填两个参数即可 —— `projectRoot`（项目绝对路径）+ `requirements`（优化目标与验收期望）。工作台「模板」页选「代码优化评审」填参运行；或对话中说：
+
+```
+用 workflow 跑 code-optimization-review，项目目录 E:\你的项目，优化目标是 ...
+```
+
+**Demo 题目**：已预置实例 `code-optimization-demo`（工作台「工作流」页可见）——「**优化工作流引擎性能**」：优化 dsh-ace-harness 自身状态机引擎（`src/engine/`、`src/store/` 热点），约束保持 86 个单测全绿，验收给出优化前后对比证据。在带凭据的 GUI 里运行：
+
+```text
+/workflow run code-optimization-demo --wait
+```
+
+（运行后可在工作台「运行记录」查看 8 个状态的完整时间线与每步产出。）
 
 ## 工作流 DSL（workflow.yaml）
 
