@@ -43,6 +43,8 @@ import '@xyflow/react/dist/style.css'
 
 const VERDICTS = ['pass', 'conditional_pass', 'fail'] as const
 const ROLES = ['', 'defender', 'attacker', 'judge'] as const
+const ISSUE_TYPES = ['design', 'implementation', 'test', 'performance', 'security'] as const
+const SEVERITIES = ['critical', 'major', 'minor'] as const
 
 /** Custom state node rendered on the canvas. */
 function AceStateNode(props: NodeProps<StateNode>): JSX.Element {
@@ -517,6 +519,68 @@ function TransitionInspector(props: {
           onChange={(event) => { setTransition({ priority: Number(event.target.value) || 100 }) }}
         />
       </label>
+      <div className={styles.conditionBlock}>
+        <span className={styles.label}>问题类型（任一命中即匹配）</span>
+        {ISSUE_TYPES.map((type) => {
+          const selected = transition.condition.issueTypes?.includes(type) ?? false
+          const toggle = (checked: boolean): void => {
+            const current = new Set(transition.condition.issueTypes ?? [])
+            if (checked) current.add(type)
+            else current.delete(type)
+            setTransition({ condition: { ...transition.condition, issueTypes: current.size > 0 ? [...current] : undefined } })
+          }
+          return (
+            <label key={type} className={styles.check}>
+              <input type="checkbox" checked={selected} onChange={(event) => { toggle(event.target.checked) }} />
+              {type}
+            </label>
+          )
+        })}
+      </div>
+      <div className={styles.conditionBlock}>
+        <span className={styles.label}>严重度（任一命中即匹配）</span>
+        {SEVERITIES.map((severity) => {
+          const selected = transition.condition.severities?.includes(severity) ?? false
+          const toggle = (checked: boolean): void => {
+            const current = new Set(transition.condition.severities ?? [])
+            if (checked) current.add(severity)
+            else current.delete(severity)
+            setTransition({ condition: { ...transition.condition, severities: current.size > 0 ? [...current] : undefined } })
+          }
+          return (
+            <label key={severity} className={styles.check}>
+              <input type="checkbox" checked={selected} onChange={(event) => { toggle(event.target.checked) }} />
+              {severity}
+            </label>
+          )
+        })}
+      </div>
+      <div className={styles.checkRow}>
+        <label className={styles.field}>
+          <span className={styles.label}>最少问题数</span>
+          <input
+            type="number"
+            min={0}
+            value={transition.condition.minIssueCount ?? ''}
+            onChange={(event) => {
+              const raw = event.target.value
+              setTransition({ condition: { ...transition.condition, minIssueCount: raw === '' ? undefined : Number(raw) } })
+            }}
+          />
+        </label>
+        <label className={styles.field}>
+          <span className={styles.label}>最多问题数</span>
+          <input
+            type="number"
+            min={0}
+            value={transition.condition.maxIssueCount ?? ''}
+            onChange={(event) => {
+              const raw = event.target.value
+              setTransition({ condition: { ...transition.condition, maxIssueCount: raw === '' ? undefined : Number(raw) } })
+            }}
+          />
+        </label>
+      </div>
       <button type="button" className={styles.deleteButton} onClick={props.onDelete}>
         删除转移
       </button>

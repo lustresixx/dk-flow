@@ -110,6 +110,8 @@ export interface StepExecutor {
     role: 'attacker' | 'defender' | 'judge' | 'neutral'
     task: string
     constraints: string[]
+    /** Shell commands run before the step; output is injected as context. */
+    preCommands: string[]
     ctx: StepContext
     /** Evidence the attacker/judge may read (defender output). */
     evidence?: string

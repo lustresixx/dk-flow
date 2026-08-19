@@ -363,6 +363,7 @@ async function executeState(
           role,
           task: step.task ?? '',
           constraints: step.constraints ?? [],
+          preCommands: step.preCommands ?? [],
           ctx: stepContext,
           evidence,
           parent: options.parent,

@@ -23,6 +23,7 @@ import { parseWorkflowYaml, summarizeWorkflow, validateWorkflowReferences, type 
 import type { AgentDefinition, StepVerdict, WorkflowConfig } from './dsl/types.js'
 import { extractVerdict, normalizeVerdict } from './dsl/verdict.js'
 import { buildStepPrompt, buildSupervisorPrompt, SUMMARY_BUDGET, truncate } from './engine/prompts.js'
+import { runPreCommands } from './engine/pre-commands.js'
 import { createRunState, runStateMachine } from './engine/runner.js'
 import { EngineError, type EngineRunOptions, type RunResult, type RunState, type StepExecutor } from './engine/types.js'
 import { captureGitSnapshot, saveGitSnapshot } from './store/git-baseline.js'
@@ -49,6 +50,8 @@ export interface AceHarnessConfig {
   maxSubworkflowDepth?: number
   /** Maximum concurrent runs per service instance (default 4). */
   maxConcurrentRuns?: number
+  /** Per pre-command timeout in milliseconds (default 300000). */
+  preCommandTimeoutMs?: number
 }
 
 /** Verdict JSON schema enforced on judge steps when the provider supports it. */
@@ -194,6 +197,7 @@ export default class AceHarnessService extends Service {
       runDirName: config.runDirName ?? '.ace-workflows',
       maxSubworkflowDepth: config.maxSubworkflowDepth ?? 8,
       maxConcurrentRuns: config.maxConcurrentRuns ?? 4,
+      preCommandTimeoutMs: config.preCommandTimeoutMs ?? 300_000,
     }
     this.catalogReady = this.loadCatalog()
   }
@@ -510,8 +514,15 @@ export default class AceHarnessService extends Service {
       async runAgentStep(input) {
         const agentDef = await service.agentByName(input.agentName)
         const systemPrompt = agentDef?.systemPrompt ?? ''
+        const preOutput = await runPreCommands(
+          input.preCommands,
+          input.ctx.projectRoot,
+          service.config.preCommandTimeoutMs,
+          input.signal,
+        )
         const promptText =
           (systemPrompt ? `## 角色设定\n${systemPrompt}\n\n` : '') +
+          (preOutput !== '' ? `## 预命令输出\n${preOutput}\n\n` : '') +
           buildStepPrompt({
             role: input.role,
             task: input.task,

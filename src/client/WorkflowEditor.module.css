@@ -126,6 +126,20 @@
   flex-wrap: wrap;
 }
 
+.checkRow .field {
+  flex: 1;
+  min-width: 0;
+}
+
+.conditionBlock {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: center;
+  border-top: 1px dashed var(--dsw-border, #3c3f4a);
+  padding-top: 6px;
+}
+
 .check {
   display: flex;
   align-items: center;

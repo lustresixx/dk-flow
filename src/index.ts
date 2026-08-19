@@ -52,6 +52,7 @@ export const Config: z<Config> = z.object({
   runDirName: z.string().default('.ace-workflows'),
   maxSubworkflowDepth: z.natural().min(1).max(8).default(8),
   maxConcurrentRuns: z.natural().min(1).default(4),
+  preCommandTimeoutMs: z.natural().default(300000),
   promptSectionOrder: z.natural().default(118),
 })
 

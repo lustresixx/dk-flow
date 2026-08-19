@@ -3,7 +3,7 @@
 把 [ACEHarness](https://gitcode.com/Cangjie-SIG/ACEHarness) 的核心移植成 DeepSeek Harness 插件：**可命名、可持久、可恢复的 YAML 状态机工作流** + **defender/attacker/judge 对抗式多 Agent 评审** + **模板库与治理**。
 
 - 状态机 DSL 与 ACE 的 `workflow.yaml` 字段/语义一致（verdict 转移、子工作流、并行组、熔断、恢复）
-- 每个步骤由专属角色的 DSH 子 Agent 执行（`ctx.subagents`，spawn/fork provider）
+- 每个步骤由专属角色的 DSH 子 Agent 执行（`ctx.subagents`，spawn/fork provider）；`preCommands` 预命令在步骤前于项目目录执行，输出注入上下文（非零退出/超时不中断步骤）
 - 内置 11 个精选 Agent（supervisor / 防守 / 攻击 / 裁决四队）与 3 个 workflow 模板（通用红蓝评审、缺陷定位修复、软件交付）
 - `/workflow` 斜杠命令 + `workflow_list` / `run_workflow` / `workflow_manage` 三个模型工具
 - Web GUI 浮动面板：模板浏览 → 填参 → 运行 → 进度看板
@@ -127,6 +127,7 @@ cordis.patch.yml 行内 `config`：
         runDirName: .ace-workflows   # 运行存储目录名
         maxSubworkflowDepth: 8       # 子工作流嵌套上限
         maxConcurrentRuns: 4         # 单服务实例并发运行上限
+        preCommandTimeoutMs: 300000  # 单个预命令超时（毫秒）
 ```
 
 ## 开发
@@ -151,7 +152,8 @@ curl http://127.0.0.1:3091/plugins/dsh-ace-harness/state
 - 步骤执行依赖 DSH 的 `spawn`/`fork` 子代理与可用的 LLM 凭据；未配置凭据时运行会以清晰错误失败并持久化 failed 状态
 - 运行在发起命令/工具的进程中前台推进；后台 job 化与跨进程恢复尚未实现（中断后可用 `/workflow resume` 在同一工作区继续）
 - `allowedTools` 按 ACE→DSH 工具映射（Bash→bash、Read→read、Write→write、Edit→edit、Glob/Grep→glob）转为子代理工具白名单；未知 ACE 工具名被跳过
-- 编辑器暂不覆盖的高级 DSL 字段：`issueTypes`/`severities`/`minIssueCount` 条件、`reviewPolicy`、自定义 `custom` 条件——这些保留在 YAML 里，可在编辑器的步骤/转移检查器中改动常用字段，高级字段直接改 YAML
+- `preCommands` 以系统 shell 在项目目录执行（ACE 语义）；工作流配置即代码，请只运行可信来源的配置
+- 编辑器暂不覆盖的 DSL 字段：`reviewPolicy`（对抗模式策略）与自定义 `custom` 条件表达式——其余常用字段（verdict/issueTypes/severities/问题数/优先级/标签）均可在编辑器内维护
 
 ## 许可证与署名
 
