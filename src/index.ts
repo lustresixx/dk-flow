@@ -1,0 +1,207 @@
+/**
+ * dsh-ace-harness plugin entry: the ACEHarness core as a DeepSeek Harness
+ * bundle. Mounts the `ace-harness` service, the `/workflow` command family,
+ * the model-facing `workflow_*` tools, a usage-policy system-prompt section,
+ * and a web panel data route (web profiles only).
+ *
+ * Installation: `dsh plugin --profile <name> add <this package>`.
+ * @module dsh-ace-harness
+ */
+import type { Context } from '@deepseek-ai/cordis'
+import z from '@deepseek-ai/schemastery'
+import type { IncomingMessage, ServerResponse } from 'node:http'
+import { registerCommands } from './commands.js'
+import AceHarnessService, { type AceHarnessConfig } from './service.js'
+import { registerTools } from './tools.js'
+
+export const name = 'ace-harness'
+
+/** Host services this plugin waits for before activation. */
+export const inject = ['tools', 'subagents', 'commands', 'userQuestions', 'systemPrompt']
+
+/** Plugin configuration, settable from the cordis.patch.yml row. */
+export interface Config extends AceHarnessConfig {
+  /** System-prompt usage section order (default 118, tool guidance band). */
+  promptSectionOrder?: number
+}
+
+export const Config: z<Config> = z.object({
+  subagentProvider: z.string().default('spawn'),
+  model: z.string(),
+  runDirName: z.string().default('.ace-workflows'),
+  maxSubworkflowDepth: z.natural().min(1).max(8).default(8),
+  maxConcurrentRuns: z.natural().min(1).default(4),
+  promptSectionOrder: z.natural().default(118),
+})
+
+/** Web-server service key candidates, newest first (mirrors dsh-agent-teams). */
+const WEB_SERVER_KEYS = ['webServer', 'httpServer'] as const
+/** Workspace registry service key candidates, newest first. */
+const WORKSPACE_KEYS = ['workspaceRegistry', 'workspace'] as const
+
+/** Structural slice of the web server service used to register panel routes. */
+interface WebRouteHost {
+  register(route: {
+    kind: 'exact' | 'prefix'
+    path: string
+    handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>
+  }): () => void
+}
+
+/** Structural slice of the workspace registry: paths with display titles. */
+interface WorkspaceRegistryLike {
+  list(): { title: string; path: string }[]
+}
+
+/** The model-facing usage policy for the workflow tools. */
+function usageSectionText(toolNames: string): string {
+  return `You have ACE state-machine workflow tools available: ${toolNames}. Use them when the user asks to run, create, review, or inspect an ACE workflow (e.g. "跑一下红蓝评审工作流", "用 workflow 评审这次改动"). Semantics: a workflow is a YAML state machine whose states run agent steps with roles defender/attacker/judge and whose transitions are driven by verdicts (pass / conditional_pass / fail). workflow_list discovers built-in templates and saved workflow instances; run_workflow starts a run (template ids are instantiated with params first; wait=true collects the terminal result); workflow_manage shows/resumes/stops runs and creates instances from templates. Prefer running named workflows instead of hand-writing steps; report the run id and terminal verdict back to the user.`
+}
+
+export function apply(ctx: Context, config: Config): void {
+  const resolved: AceHarnessConfig = {
+    subagentProvider: config.subagentProvider,
+    model: config.model,
+    runDirName: config.runDirName,
+    maxSubworkflowDepth: config.maxSubworkflowDepth,
+    maxConcurrentRuns: config.maxConcurrentRuns,
+  }
+  // The Service constructor registers synchronously on this plugin's fiber
+  // (and unregisters when the fiber unloads), so direct construction makes
+  // the instance immediately resolvable for commands, tools, and routes.
+  const aceHarness = new AceHarnessService(ctx, resolved)
+
+  registerCommands(ctx, aceHarness)
+  registerTools(ctx, aceHarness)
+
+  ctx.systemPrompt.section({
+    name: 'ace-harness:usage',
+    order: config.promptSectionOrder ?? 118,
+    text: usageSectionText('workflow_list, run_workflow, workflow_manage'),
+  })
+
+  // The web panel data route needs the web server and the workspace registry,
+  // which headless profiles do not mount and which may bind after this plugin
+  // under concurrent activation. Register lazily; in a webless profile the
+  // plugin stays command/tool-only and never blocks boot.
+  let webRegistered = false
+  const registerWebSurface = (): void => {
+    if (webRegistered) return
+    const webServer = (ctx.get(WEB_SERVER_KEYS[0]) ?? ctx.get(WEB_SERVER_KEYS[1])) as
+      | WebRouteHost
+      | undefined
+    const workspaceRegistry = (ctx.get(WORKSPACE_KEYS[0]) ?? ctx.get(WORKSPACE_KEYS[1])) as
+      | WorkspaceRegistryLike
+      | undefined
+    if (webServer === undefined || workspaceRegistry === undefined) return
+    webRegistered = true
+
+    ctx.effect(() => webServer.register({
+      kind: 'exact',
+      path: '/plugins/dsh-ace-harness/state',
+      handler: async (req, res) => {
+        const url = new URL(req.url ?? '/', 'http://x')
+        try {
+          const workspaces = workspaceRegistry.list().map((workspace) => ({
+            workspace: workspace.title,
+            path: workspace.path,
+          }))
+          // Aggregate across every known workspace; the panel filters by its own
+          // session workspace (or ?workspace=<path> when supplied).
+          const wanted = url.searchParams.get('workspace')
+          const roots = wanted ? workspaces.filter((w) => w.path === wanted) : workspaces
+          const [agents, templates, runsByWorkspace, workflowsByWorkspace] = await Promise.all([
+            aceHarness.listAgents(),
+            aceHarness.listTemplates(),
+            Promise.all(roots.map(async (w) => ({ path: w.path, runs: await aceHarness.listRuns(w.path) }))),
+            Promise.all(roots.map(async (w) => ({ path: w.path, workflows: await aceHarness.listWorkflows(w.path) }))),
+          ])
+        const body = JSON.stringify({
+          agents: agents.map((agent) => ({
+            name: agent.name,
+            team: agent.team,
+            roleType: agent.roleType,
+            description: agent.description ?? '',
+            capabilities: agent.capabilities,
+          })),
+          templates: templates.map((t) => ({
+            id: t.id,
+            version: t.version,
+            name: t.manifest.metadata.name,
+            description: t.manifest.metadata.description ?? '',
+            category: t.manifest.metadata.category ?? '',
+            tags: t.manifest.metadata.tags ?? [],
+            featured: t.manifest.metadata.featured ?? false,
+            stateCount: t.config.workflow.states.length,
+            parameters: t.manifest.spec.parameters ?? [],
+            agents: t.manifest.spec.dependencies?.agents ?? [],
+            states: t.config.workflow.states.map((s) => ({
+              name: s.name,
+              isInitial: s.isInitial,
+              isFinal: s.isFinal,
+              position: s.position ?? null,
+              steps: s.steps.map((step) => ({
+                name: step.name,
+                agent: step.agent ?? null,
+                role: step.role ?? null,
+                type: step.type ?? 'agent',
+              })),
+            })),
+          })),
+          workspaces: runsByWorkspace.map((entry, index) => ({
+            path: entry.path,
+            title: roots[index]?.workspace ?? entry.path,
+            runs: entry.runs.map((run) => ({
+              runId: run.id,
+              workflowName: run.workflowName,
+              status: run.status,
+              currentState: run.currentState,
+              completedSteps: run.completedSteps,
+              totalSteps: run.totalSteps,
+              error: run.error,
+              startedAt: run.startedAt,
+              finishedAt: run.finishedAt,
+              states: run.stateOutcomes.map((outcome) => ({
+                state: outcome.state,
+                verdict: outcome.verdict.verdict,
+                steps: outcome.steps.map((step) => ({
+                  step: step.step,
+                  agent: step.agent,
+                  role: step.role,
+                  verdict: step.verdict?.verdict ?? null,
+                })),
+              })),
+            })),
+            workflows: workflowsByWorkspace[index]?.workflows.map((w) => ({
+              fileName: w.fileName,
+              name: w.summary.name,
+              source: w.source,
+              stateCount: w.summary.stateCount,
+              stepCount: w.summary.stepCount,
+            })) ?? [],
+          })),
+        })
+          res.writeHead(200, {
+            'content-type': 'application/json; charset=utf-8',
+            'cache-control': 'no-store',
+          })
+          res.end(body)
+        } catch (error) {
+          ctx.logger('ace-harness').warn(`state route failed: ${String(error)}`)
+          res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' })
+          res.end(String(error))
+        }
+      },
+    }), 'ace-harness: state route')
+  }
+
+  registerWebSurface()
+  ctx.on('internal/service', (serviceName: string) => {
+    if (
+      WEB_SERVER_KEYS.includes(serviceName as (typeof WEB_SERVER_KEYS)[number]) ||
+      WORKSPACE_KEYS.includes(serviceName as (typeof WORKSPACE_KEYS)[number])
+    ) {
+      registerWebSurface()
+    }
+  })
+}

@@ -1,0 +1,114 @@
+import { describe, expect, it } from 'vitest'
+import { parseWorkflowYaml, validateWorkflowReferences, WorkflowConfigError } from '../src/dsl/load.js'
+
+const validYaml = `
+workflow:
+  name: 红蓝评审
+  mode: state-machine
+  states:
+    - name: 方案
+      isInitial: true
+      steps:
+        - name: 设计
+          agent: architect
+          role: defender
+          task: 设计
+      transitions:
+        - to: 完成
+          condition: { verdict: pass }
+    - name: 完成
+      isFinal: true
+      steps:
+        - name: 汇总
+          agent: documentation-writer
+          task: 汇总
+      transitions: []
+`
+
+describe('parseWorkflowYaml', () => {
+  it('parses a valid document with defaults applied', () => {
+    const config = parseWorkflowYaml(validYaml)
+    expect(config.workflow.name).toBe('红蓝评审')
+    expect(config.workflow.maxTransitions).toBe(50)
+    expect(config.workflow.states).toHaveLength(2)
+  })
+
+  it('rejects a document without a name', () => {
+    expect(() =>
+      parseWorkflowYaml('workflow:\n  mode: state-machine\n  states: []'),
+    ).toThrow(WorkflowConfigError)
+  })
+
+  it('rejects broken YAML with a parse error', () => {
+    expect(() => parseWorkflowYaml('workflow: [unclosed')).toThrow(WorkflowConfigError)
+  })
+
+  it('rejects an agent step without a task', () => {
+    const yaml = `
+workflow:
+  name: x
+  mode: state-machine
+  states:
+    - name: s
+      isInitial: true
+      isFinal: true
+      steps:
+        - name: step
+          agent: architect
+      transitions: []
+`
+    expect(() => parseWorkflowYaml(yaml)).toThrow(/任务描述不能为空|校验失败/)
+  })
+
+  it('requires a configFile on subworkflow steps', () => {
+    const yaml = `
+workflow:
+  name: x
+  mode: state-machine
+  states:
+    - name: s
+      isInitial: true
+      isFinal: true
+      steps:
+        - name: sub
+          type: subworkflow
+      transitions: []
+`
+    expect(() => parseWorkflowYaml(yaml)).toThrow(/子工作流步骤必须设置/)
+  })
+})
+
+describe('validateWorkflowReferences', () => {
+  it('flags unknown agents, transitions, and missing initials', () => {
+    const config = parseWorkflowYaml(validYaml)
+    const errors = validateWorkflowReferences(config, new Set(['documentation-writer']))
+    expect(errors.some((e) => e.includes('architect'))).toBe(true)
+  })
+
+  it('flags transitions to unknown states', () => {
+    const yaml = `
+workflow:
+  name: x
+  mode: state-machine
+  states:
+    - name: s
+      isInitial: true
+      steps:
+        - { name: step, agent: a, task: t }
+      transitions:
+        - { to: ghost, condition: { verdict: pass } }
+`
+    const config = parseWorkflowYaml(yaml)
+    const errors = validateWorkflowReferences(config, new Set(['a']))
+    expect(errors.some((e) => e.includes('ghost'))).toBe(true)
+  })
+
+  it('passes a fully consistent config', () => {
+    const config = parseWorkflowYaml(validYaml)
+    const errors = validateWorkflowReferences(
+      config,
+      new Set(['architect', 'documentation-writer']),
+    )
+    expect(errors).toEqual([])
+  })
+})

@@ -1,0 +1,6 @@
+# ACEHarness core as a DSH plugin: named, persisted state-machine workflows
+# with adversarial defender/attacker/judge review, templates, and governance.
+
+- insert:
+    - id: ace-harness
+      name: dsh-ace-harness

@@ -1,0 +1,117 @@
+import { describe, expect, it } from 'vitest'
+import { loadBuiltinAgents, loadBuiltinTemplates } from '../src/catalog/index.js'
+import { validateWorkflowReferences } from '../src/dsl/load.js'
+import { instantiateTemplate } from '../src/templates/instantiate.js'
+
+describe('built-in catalog', () => {
+  it('ships the selected ACE agent roster', async () => {
+    const agents = await loadBuiltinAgents()
+    const names = agents.map((a) => a.name)
+    expect(names).toEqual(
+      expect.arrayContaining([
+        'default-supervisor',
+        'architect',
+        'solution-breaker',
+        'design-judge',
+        'developer',
+        'code-hunter',
+        'code-judge',
+        'tester',
+        'stress-tester',
+        'documentation-writer',
+        'issue-reproducer',
+      ]),
+    )
+    for (const agent of agents) {
+      expect(agent.systemPrompt.length).toBeGreaterThan(50)
+      expect(['blue', 'red', 'judge', 'black-gold']).toContain(agent.team)
+    }
+  })
+
+  it('ships the three built-in workflow templates, all reference-consistent', async () => {
+    const templates = await loadBuiltinTemplates()
+    expect(templates.map((t) => t.id)).toEqual(
+      expect.arrayContaining(['general-red-blue-review', 'issue-fix', 'software-delivery']),
+    )
+    const agents = await loadBuiltinAgents()
+    const known = new Set(agents.map((a) => a.name))
+    for (const template of templates) {
+      const errors = validateWorkflowReferences(template.config, known)
+      expect(errors, `${template.id} has reference errors`).toEqual([])
+    }
+  })
+})
+
+describe('instantiateTemplate', () => {
+  async function sources() {
+    const { readFile } = await import('node:fs/promises')
+    const { fileURLToPath } = await import('node:url')
+    const base = fileURLToPath(new URL('../resources/workflows/general-red-blue-review/1.0.0/', import.meta.url))
+    return {
+      manifestText: await readFile(`${base}/manifest.yaml`, 'utf8'),
+      workflowYamlText: await readFile(`${base}/workflow.yaml`, 'utf8'),
+    }
+  }
+
+  it('binds parameters and yields a valid instance', async () => {
+    const { manifestText, workflowYamlText } = await sources()
+    const known = new Set([
+      'default-supervisor',
+      'architect',
+      'solution-breaker',
+      'design-judge',
+      'developer',
+      'code-hunter',
+      'code-judge',
+      'tester',
+      'stress-tester',
+      'documentation-writer',
+    ])
+    const { config, yamlText } = instantiateTemplate(
+      manifestText,
+      workflowYamlText,
+      { workflowName: '我的评审', projectRoot: '/proj', workspaceMode: 'in-place', requirements: '评审 X' },
+      {},
+      known,
+    )
+    expect(config.workflow.name).toBe('我的评审')
+    expect(config.context?.projectRoot).toBe('/proj')
+    expect(yamlText).toContain('我的评审')
+  })
+
+  it('rejects missing required parameters', async () => {
+    const { manifestText, workflowYamlText } = await sources()
+    const known = new Set<string>()
+    expect(() =>
+      instantiateTemplate(manifestText, workflowYamlText, {}, {}, known),
+    ).toThrow(/必填|参数/)
+  })
+
+  it('rejects invalid enum values', async () => {
+    const { manifestText, workflowYamlText } = await sources()
+    const known = new Set<string>()
+    expect(() =>
+      instantiateTemplate(
+        manifestText,
+        workflowYamlText,
+        { projectRoot: '/p', workspaceMode: 'sideways' },
+        {},
+        known,
+      ),
+    ).toThrow(/必须为/)
+  })
+
+  it('rejects instances whose agents are unknown after substitution', async () => {
+    const { manifestText, workflowYamlText } = await sources()
+    const known = new Set(['architect'])
+    expect(() =>
+      instantiateTemplate(
+        manifestText,
+        workflowYamlText,
+        { projectRoot: '/p' },
+        {},
+        known,
+      ),
+    ).toThrow(/未知 Agent/)
+  })
+})

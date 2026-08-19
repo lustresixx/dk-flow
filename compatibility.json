@@ -1,0 +1,11 @@
+{
+  "dsnVersion": "0.1.0-rc.7",
+  "testedAt": "2026-08-14",
+  "platform": {
+    "dsh": "0.1.0-rc.7",
+    "cordis": "4.0.1",
+    "schemastery": "3.18.1"
+  },
+  "providers": ["spawn", "fork"],
+  "notes": "Verified against the npm-installed @deepseek-ai/dsh 0.1.0-rc.7: bundle patch composition, /workflow command registration, workflow_* tool registration, subagent seam (spawn/fork), and the /plugins/dsh-ace-harness web surface."
+}
