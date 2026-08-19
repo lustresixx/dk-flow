@@ -153,6 +153,7 @@ export function registerTools(ctx: Context, service: AceHarnessService): void {
           signal: exec.signal,
           workflow,
           inputs: values,
+          mode: args.wait === true ? 'foreground' : 'job',
         })
         if (args.wait === true) {
           const result = await handle.result
@@ -165,7 +166,7 @@ export function registerTools(ctx: Context, service: AceHarnessService): void {
           }
           return value
         }
-        const value: JsonValue = { runId: handle.runId, status: 'started' }
+        const value: JsonValue = { runId: handle.runId, status: 'started', jobId: handle.jobId ?? null }
         return value
       },
     }),
@@ -228,7 +229,12 @@ export function registerTools(ctx: Context, service: AceHarnessService): void {
           case 'resume': {
             const runId = args.runId as string | undefined
             if (!runId) throw new Error('resume 需要 runId')
-            const handle = await service.resumeRun({ parent: agent, signal: exec.signal, runId })
+            const handle = await service.resumeRun({
+              parent: agent,
+              signal: exec.signal,
+              runId,
+              mode: args.wait === true ? 'foreground' : 'job',
+            })
             if (args.wait === true) {
               const result = await handle.result
               return {
@@ -239,7 +245,7 @@ export function registerTools(ctx: Context, service: AceHarnessService): void {
                 states: result.stateOutcomes.map((o) => ({ state: o.state, verdict: o.verdict.verdict })),
               } as JsonValue
             }
-            return { runId: handle.runId, status: 'resumed' }
+            return { runId: handle.runId, status: 'resumed', jobId: handle.jobId ?? null }
           }
           case 'stop': {
             const runId = args.runId as string | undefined

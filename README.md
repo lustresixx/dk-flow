@@ -50,6 +50,8 @@ dsh --profile web --dump-config
 /workflow stop <runId>
 ```
 
+`/workflow run`（及 `resume`）不带 `--wait` 时以 **DSH 后台 job** 运行（`ace-workflow` 类型，归发起会话所有，可经 jobs 面板/工具查看与终止）；带 `--wait` 则在当前调用中同步等待终态。`workflow_manage stop` 与 job kill 等价。
+
 模型工具（自然语言即可触发）：
 
 - `workflow_list` — 列出模板与已保存的 workflow 实例
@@ -150,7 +152,7 @@ curl http://127.0.0.1:3091/plugins/dsh-ace-harness/state
 ## 已知限制
 
 - 步骤执行依赖 DSH 的 `spawn`/`fork` 子代理与可用的 LLM 凭据；未配置凭据时运行会以清晰错误失败并持久化 failed 状态
-- 运行在发起命令/工具的进程中前台推进；后台 job 化与跨进程恢复尚未实现（中断后可用 `/workflow resume` 在同一工作区继续）
+- 后台运行以 DSH job 承载（进程内 job 注册表）；跨进程重启后 job 记录消失，但运行状态已持久化，可在同一工作区 `/workflow resume` 继续
 - `allowedTools` 按 ACE→DSH 工具映射（Bash→bash、Read→read、Write→write、Edit→edit、Glob/Grep→glob）转为子代理工具白名单；未知 ACE 工具名被跳过
 - `preCommands` 以系统 shell 在项目目录执行（ACE 语义）；工作流配置即代码，请只运行可信来源的配置
 - 编辑器暂不覆盖的 DSL 字段：`reviewPolicy`（对抗模式策略）与自定义 `custom` 条件表达式——其余常用字段（verdict/issueTypes/severities/问题数/优先级/标签）均可在编辑器内维护

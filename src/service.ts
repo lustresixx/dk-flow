@@ -12,7 +12,14 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { assertObjectJsonSchema, type ObjectJsonSchema, type ToolRestriction } from '@deepseek-ai/dsh-tools'
 import type { SubagentStartRequest } from '@deepseek-ai/dsh-subagent'
+import type { JobId, JobStart } from '@deepseek-ai/dsh-jobs'
 import '@deepseek-ai/dsh-user-questions'
+
+declare module '@deepseek-ai/dsh-jobs' {
+  interface JobKindMap {
+    'ace-workflow': 'ace-workflow'
+  }
+}
 import {
   loadBuiltinAgents,
   loadBuiltinTemplates,
@@ -168,11 +175,15 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-/** A started run: its id and the promise of its terminal result. */
+/** A started run: its id, optional DSH job id, and its terminal result. */
 export interface AceRunHandle {
   runId: string
+  jobId?: JobId
   result: Promise<RunResult>
 }
+
+/** How a run executes: awaited by the caller or detached as a DSH job. */
+export type RunMode = 'foreground' | 'job'
 
 /** Extract plain text from LLM content blocks. */
 function toText(blocks: ContentBlock[]): string {
@@ -292,12 +303,15 @@ export default class AceHarnessService extends Service {
   /**
    * Start one workflow run in the invoking agent's workspace. The run executes
    * on the DSH subagent seam and persists progress after every step.
+   * @param mode - `foreground` returns the settled result to the caller;
+   *   `job` detaches the run as a DSH background job owned by the parent agent.
    */
   async startRun(input: {
     parent: Agent
     signal: AbortSignal
     workflow: { config: WorkflowConfig; configFile: string }
     inputs?: Record<string, string>
+    mode?: RunMode
   }): Promise<AceRunHandle> {
     if (this.active.size >= this.config.maxConcurrentRuns) {
       throw new Error(`并发运行数达到上限 ${this.config.maxConcurrentRuns}`)
@@ -345,25 +359,20 @@ export default class AceHarnessService extends Service {
       await saveGitSnapshot(workspace, runId, this.config.runDirName, 'baseline', null, snapshot)
     }
 
-    const result = runStateMachine(options)
-      .then(async (runResult) => {
-        this.ctx.emit('ace/workflow-end', { runId, status: runResult.status })
-        await appendAudit(workspace, runId, this.config.runDirName, {
-          at: new Date().toISOString(),
-          event: 'end',
-          status: runResult.status,
-          error: runResult.error,
-        })
-        return runResult
-      })
-      .finally(() => {
-        this.active.delete(runId)
-      })
-    return { runId, result }
+    const begin = this.beginRun(workspace, runId, options)
+    if (input.mode === 'job') {
+      return { runId, ...this.detachAsJob(runId, input.parent, controller, begin, input.workflow.config.workflow.name) }
+    }
+    return { runId, result: begin() }
   }
 
   /** Resume a persisted run (authorized by its recorded parent session). */
-  async resumeRun(input: { parent: Agent; signal: AbortSignal; runId: string }): Promise<AceRunHandle> {
+  async resumeRun(input: {
+    parent: Agent
+    signal: AbortSignal
+    runId: string
+    mode?: RunMode
+  }): Promise<AceRunHandle> {
     const workspace = this.workspaceOf(input.parent)
     const persisted = await loadRunState(workspace, input.runId, this.config.runDirName)
     if (!persisted) throw new Error(`未找到运行 ${input.runId}`)
@@ -391,21 +400,71 @@ export default class AceHarnessService extends Service {
       linked.signal,
       () => loadRunState(workspace, input.runId, this.config.runDirName),
     )
-    const result = runStateMachine(options)
-      .then(async (runResult) => {
-        this.ctx.emit('ace/workflow-end', { runId: input.runId, status: runResult.status })
-        await appendAudit(workspace, input.runId, this.config.runDirName, {
-          at: new Date().toISOString(),
-          event: 'end',
-          status: runResult.status,
-          error: runResult.error,
+    const begin = this.beginRun(workspace, input.runId, options)
+    if (input.mode === 'job') {
+      return { runId: input.runId, ...this.detachAsJob(input.runId, input.parent, controller, begin, persisted.workflowName) }
+    }
+    return { runId: input.runId, result: begin() }
+  }
+
+  /** Wrap the engine promise chain: end event, audit row, registry cleanup. */
+  private beginRun(
+    workspace: string,
+    runId: string,
+    options: EngineRunOptions,
+  ): () => Promise<RunResult> {
+    return () =>
+      runStateMachine(options)
+        .then(async (runResult) => {
+          this.ctx.emit('ace/workflow-end', { runId, status: runResult.status })
+          await appendAudit(workspace, runId, this.config.runDirName, {
+            at: new Date().toISOString(),
+            event: 'end',
+            status: runResult.status,
+            error: runResult.error,
+          })
+          return runResult
         })
-        return runResult
-      })
-      .finally(() => {
-        this.active.delete(input.runId)
-      })
-    return { runId: input.runId, result }
+        .finally(() => {
+          this.active.delete(runId)
+        })
+  }
+
+  /** Detach an engine run as a DSH background job owned by the parent agent. */
+  private detachAsJob(
+    runId: string,
+    parent: Agent,
+    controller: AbortController,
+    begin: () => Promise<RunResult>,
+    workflowName: string,
+  ): { jobId: JobId; result: Promise<RunResult> } {
+    const jobRegistry = this.ctx.get('jobs') as JobRegistryFace | undefined
+    if (!jobRegistry) {
+      controller.abort()
+      throw new Error('当前 profile 未挂载 jobs 服务，无法以后台 job 方式运行')
+    }
+    let resolveResult!: (value: RunResult) => void
+    let rejectResult!: (reason: unknown) => void
+    const result = new Promise<RunResult>((resolvePromise, rejectPromise) => {
+      resolveResult = resolvePromise
+      rejectResult = rejectPromise
+    })
+    const jobId = jobRegistry.start({
+      kind: 'ace-workflow',
+      label: `ACE workflow ${workflowName}`,
+      owner: parent,
+      run: () => {
+        const runResult = begin()
+        runResult.then(resolveResult, rejectResult)
+        return {
+          cancel: (): void => {
+            controller.abort()
+          },
+          done: runResult.then((settled) => jobOutcomeFor(settled)),
+        }
+      },
+    })
+    return { jobId, result }
   }
 
   /** Cancel an active run. Returns false when the run is not active. */
@@ -668,4 +727,35 @@ function sanitize(name: string): string {
 
 function randomSuffix(): string {
   return Math.random().toString(36).slice(2, 10)
+}
+
+/** Structural face of the jobs registry (resolved lazily through the store). */
+interface JobRegistryFace {
+  start(spec: JobStart): JobId
+}
+
+/** Structural terminal outcome returned to the jobs registry. */
+export interface JobOutcomeLike {
+  status: 'completed' | 'killed' | 'failed'
+  detail?: string
+  output?: string
+}
+
+/** Project a settled run onto the jobs registry's terminal outcome. */
+export function jobOutcomeFor(result: RunResult): JobOutcomeLike {
+  return {
+    status:
+      result.status === 'completed' ? 'completed' : result.status === 'stopped' ? 'killed' : 'failed',
+    detail: result.verdict ?? result.error ?? undefined,
+    output: summarizeRunForJob(result),
+  }
+}
+
+/** One-line summary of a settled run for the job's final output. */
+function summarizeRunForJob(result: RunResult): string {
+  const lines = result.stateOutcomes.map((outcome) => `${outcome.state}→${outcome.verdict.verdict}`)
+  const verdict = result.verdict ? ` · 最终结论 ${result.verdict}` : ''
+  return `运行 ${result.runId} ${result.status}${verdict}：${lines.join(', ') || '无状态'}${
+    result.error ? ` · 错误: ${result.error}` : ''
+  }`
 }

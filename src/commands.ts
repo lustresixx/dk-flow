@@ -183,11 +183,18 @@ async function dispatch(ctx: Context, service: AceHarnessService, invocation: Co
       case 'resume': {
         const runId = positional[1]
         if (!runId) return err('用法：/workflow resume <runId>')
-        const handle = await service.resumeRun({ parent: agent, signal, runId })
+        const handle = await service.resumeRun({
+          parent: agent,
+          signal,
+          runId,
+          mode: flags.has('wait') ? 'foreground' : 'job',
+        })
         if (flags.has('wait')) {
           return ok(renderResult(await handle.result))
         }
-        return ok(`已恢复运行 ${handle.runId}，使用 /workflow show ${handle.runId} 查看进度`)
+        return ok(
+          `已恢复运行 ${handle.runId}${handle.jobId ? `（后台 job ${handle.jobId}）` : ''}，使用 /workflow show ${handle.runId} 查看进度`,
+        )
       }
       case 'stop': {
         const runId = positional[1]
@@ -274,9 +281,17 @@ async function runWorkflow(
     workflow.config.context.requirements = requirement
   }
 
-  const handle = await service.startRun({ parent: agent, signal, workflow, inputs: values })
+  const handle = await service.startRun({
+    parent: agent,
+    signal,
+    workflow,
+    inputs: values,
+    mode: flags.has('wait') ? 'foreground' : 'job',
+  })
   if (flags.has('wait')) {
     return ok(renderResult(await handle.result))
   }
-  return ok(`已启动运行 ${handle.runId}（workflow: ${workflow.config.workflow.name}），使用 /workflow show ${handle.runId} 查看进度；后台执行中，可在运行后查看状态`)
+  return ok(
+    `已启动运行 ${handle.runId}${handle.jobId ? `（后台 job ${handle.jobId}）` : ''}（workflow: ${workflow.config.workflow.name}）。使用 /workflow show ${handle.runId} 查看进度，/workflow stop ${handle.runId} 停止。`,
+  )
 }
