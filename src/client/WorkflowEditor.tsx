@@ -366,6 +366,53 @@ function StateInspector(props: {
           }}
         />
       </label>
+      <div className={styles.checkRow}>
+        <label className={styles.field}>
+          <span className={styles.label}>评审模式（reviewPolicy）</span>
+          <select
+            value={state.reviewPolicy?.mode ?? 'standard'}
+            onChange={(event) => {
+              const mode = event.target.value as 'standard' | 'adversarial'
+              setState({
+                reviewPolicy: {
+                  mode,
+                  source: 'user',
+                  locked: false,
+                  confidence: state.reviewPolicy?.confidence ?? 'high',
+                  riskSignals: state.reviewPolicy?.riskSignals ?? [],
+                  rationale: state.reviewPolicy?.rationale ?? '',
+                },
+              })
+            }}
+          >
+            <option value="standard">standard（串行步骤内联 verdict）</option>
+            <option value="adversarial">adversarial（defender/attacker/judge 对抗）</option>
+          </select>
+        </label>
+        <label className={styles.field}>
+          <span className={styles.label}>置信度</span>
+          <select
+            value={state.reviewPolicy?.confidence ?? 'high'}
+            onChange={(event) => {
+              const confidence = event.target.value as 'high' | 'medium' | 'low'
+              setState({
+                reviewPolicy: {
+                  mode: state.reviewPolicy?.mode ?? 'standard',
+                  source: 'user',
+                  locked: false,
+                  confidence,
+                  riskSignals: state.reviewPolicy?.riskSignals ?? [],
+                  rationale: state.reviewPolicy?.rationale ?? '',
+                },
+              })
+            }}
+          >
+            <option value="high">high</option>
+            <option value="medium">medium</option>
+            <option value="low">low（强制对抗）</option>
+          </select>
+        </label>
+      </div>
       <h4 className={styles.subTitle}>步骤（{drafts.length}）</h4>
       <ol className={styles.stepList}>
         {drafts.map((draft, index) => (

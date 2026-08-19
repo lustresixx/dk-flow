@@ -155,7 +155,7 @@ curl http://127.0.0.1:3091/plugins/dsh-ace-harness/state
 - 后台运行以 DSH job 承载（进程内 job 注册表）；跨进程重启后 job 记录消失，但运行状态已持久化，可在同一工作区 `/workflow resume` 继续
 - `allowedTools` 按 ACE→DSH 工具映射（Bash→bash、Read→read、Write→write、Edit→edit、Glob/Grep→glob）转为子代理工具白名单；未知 ACE 工具名被跳过
 - `preCommands` 以系统 shell 在项目目录执行（ACE 语义）；工作流配置即代码，请只运行可信来源的配置
-- 编辑器暂不覆盖的 DSL 字段：`reviewPolicy`（对抗模式策略）与自定义 `custom` 条件表达式——其余常用字段（verdict/issueTypes/severities/问题数/优先级/标签）均可在编辑器内维护
+- 编辑器暂不覆盖的 DSL 字段：自定义 `custom` 条件表达式与 `constraints`/`skills` 等步骤级细节——其余常用字段（verdict/issueTypes/severities/问题数/优先级/标签/reviewPolicy 对抗模式/置信度）均可在编辑器内维护
 
 ## 许可证与署名
 

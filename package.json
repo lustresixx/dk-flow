@@ -24,6 +24,7 @@
     "cordis.patch.yml",
     "compatibility.json",
     "README.md",
+    "docs/**/*.md",
     "LICENSE"
   ],
   "scripts": {
