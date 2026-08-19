@@ -69,7 +69,7 @@ export const issueSchema = z.object({
 })
 
 export const transitionConditionSchema = z.object({
-  verdict: z.enum(['pass', 'conditional_pass', 'fail']).optional(),
+  verdict: z.enum(['success', 'pass', 'conditional_pass', 'fail']).optional(),
   issueTypes: z.array(z.enum(['design', 'implementation', 'test', 'performance', 'security'])).optional(),
   severities: z.array(z.enum(['critical', 'major', 'minor'])).optional(),
   minIssueCount: z.number().optional(),
@@ -118,9 +118,10 @@ export const workflowStepSchema = z.object({
   agent: z.string().optional(),
   task: z.string().optional(),
   preCommands: z.array(z.string()).optional(),
-  type: z.enum(['agent', 'subworkflow']).optional(),
+  type: z.enum(['agent', 'script', 'subworkflow']).optional(),
   workflow: z.string().optional(),
   subworkflow: subworkflowReferenceSchema.partial().optional(),
+  script: z.string().optional(),
   inputs: subworkflowInputsSchema.optional(),
   result: subworkflowResultMappingSchema.optional(),
   runtime: subworkflowRuntimeSchema.optional(),
@@ -137,6 +138,16 @@ export const workflowStepSchema = z.object({
         code: z.ZodIssueCode.custom,
         path: ['workflow'],
         message: '子工作流步骤必须设置 workflow 或 subworkflow.configFile',
+      })
+    }
+    return
+  }
+  if (step.type === 'script') {
+    if (!step.script?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['script'],
+        message: '脚本步骤必须设置 script',
       })
     }
     return

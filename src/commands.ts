@@ -40,6 +40,15 @@ function parseFlags(rawInput: string): { positional: string[]; flags: Map<string
   return { positional, flags }
 }
 
+const VERDICT_TEXT: Record<string, string> = {
+  success: '成功',
+  pass: '成功',
+  fail: '失败',
+  conditional_pass: '有条件通过',
+}
+
+const verdictText = (verdict: string): string => VERDICT_TEXT[verdict] ?? verdict
+
 /** Render one run's state progression as text. */
 function renderRun(state: RunState): string {
   const lines = [
@@ -52,10 +61,10 @@ function renderRun(state: RunState): string {
   if (state.error) lines.push(`错误: ${state.error}`)
   for (const outcome of state.stateOutcomes) {
     lines.push(
-      `  状态「${outcome.state}」→ ${outcome.verdict.verdict}${outcome.supervisorScore !== undefined ? ` [评分 ${outcome.supervisorScore}]` : ''}${outcome.verdict.rationale ? `：${truncateLine(outcome.verdict.rationale, 120)}` : ''}`,
+      `  状态「${outcome.state}」→ ${verdictText(outcome.verdict.verdict)}${outcome.supervisorScore !== undefined ? ` [评分 ${outcome.supervisorScore}]` : ''}${outcome.verdict.rationale ? `：${truncateLine(outcome.verdict.rationale, 120)}` : ''}`,
     )
     for (const step of outcome.steps) {
-      lines.push(`    · ${step.step}${step.agent ? ` [${step.agent}]` : ''}${step.verdict ? ` → ${step.verdict.verdict}` : ''}`)
+      lines.push(`    · ${step.step}${step.agent ? ` [${step.agent}]` : ''}${step.verdict ? ` → ${verdictText(step.verdict.verdict)}` : ''}`)
     }
     if (outcome.supervisorNote) lines.push(`    supervisor: ${truncateLine(outcome.supervisorNote, 200)}`)
   }

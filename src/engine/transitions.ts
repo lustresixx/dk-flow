@@ -11,20 +11,21 @@ import type {
   StateTransition,
   Verdict,
 } from '../dsl/types.js'
-import { aggregateVerdicts } from '../dsl/verdict.js'
+import { aggregateVerdicts, verdictEquals } from '../dsl/verdict.js'
 import { EngineError } from './types.js'
 
-const RANK: Record<Verdict, number> = { fail: 0, conditional_pass: 1, pass: 2 }
+const RANK: Record<Verdict, number> = { fail: 0, conditional_pass: 1, success: 2, pass: 2 }
 
 /**
  * Whether one transition condition matches a state outcome.
  * An empty condition matches any outcome (unconditional edge).
+ * `success` and the legacy `pass` are aliases of the same outcome.
  */
 export function matchCondition(
   condition: StateTransition['condition'],
   verdict: StepVerdict,
 ): boolean {
-  if (condition.verdict && condition.verdict !== verdict.verdict) return false
+  if (condition.verdict && !verdictEquals(condition.verdict, verdict.verdict)) return false
   const issues = verdict.issues
   if (condition.issueTypes && condition.issueTypes.length > 0) {
     const present = new Set(issues.map((issue) => issue.type))
@@ -89,19 +90,20 @@ export function joinSegment(
 ): StepVerdict | undefined {
   if (verdicts.length === 0) return undefined
   const mode = policy?.mode ?? 'all'
+  const passed = (verdict: StepVerdict): boolean => verdict.verdict === 'pass' || verdict.verdict === 'success'
   if (mode === 'any') {
-    const passed = verdicts.find((verdict) => verdict.verdict === 'pass')
-    if (passed) return { ...passed, issues: verdicts.flatMap((verdict) => verdict.issues) }
+    const winning = verdicts.find(passed)
+    if (winning) return { ...winning, issues: verdicts.flatMap((verdict) => verdict.issues) }
     return aggregateVerdicts(verdicts)
   }
   if (mode === 'quorum') {
     const quorum = policy?.quorum ?? 1
-    const passed = verdicts.filter((verdict) => verdict.verdict === 'pass')
-    if (passed.length >= quorum) {
+    const winners = verdicts.filter(passed)
+    if (winners.length >= quorum) {
       return {
-        verdict: 'pass',
+        verdict: 'success',
         issues: verdicts.flatMap((verdict) => verdict.issues),
-        rationale: `quorum 达成：${passed.length}/${verdicts.length} 个步骤通过`,
+        rationale: `quorum 达成：${winners.length}/${verdicts.length} 个步骤成功`,
       }
     }
     return aggregateVerdicts(verdicts)

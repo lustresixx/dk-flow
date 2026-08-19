@@ -54,7 +54,7 @@ export interface StateRunDto {
     verdict: string
     supervisorScore: number | null
     supervisorNote: string | null
-    steps: { step: string; agent: string | null; role: string | null; verdict: string | null }[]
+    steps: { step: string; agent: string | null; role: string | null; verdict: string | null; outputSummary: string }[]
   }[]
 }
 

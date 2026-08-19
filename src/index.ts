@@ -9,7 +9,9 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import { existsSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { fileURLToPath } from 'node:url'
 import { registerCommands } from './commands.js'
 import AceHarnessService, { type AceHarnessConfig } from './service.js'
 import { registerTools } from './tools.js'
@@ -33,6 +35,15 @@ function readRequestBody(req: IncomingMessage, maxBytes: number): Promise<string
     })
     req.on('error', rejectPromise)
   })
+}
+
+/** Packaged assets directory, probing the compiled and source layouts. */
+function assetsRoot(): URL {
+  const candidates = [new URL('../assets/', import.meta.url), new URL('../../assets/', import.meta.url)]
+  for (const candidate of candidates) {
+    if (existsSync(fileURLToPath(new URL('ace-logo.png', candidate)))) return candidate
+  }
+  return candidates[0]!
 }
 
 export const name = 'ace-harness'
@@ -193,6 +204,7 @@ export function apply(ctx: Context, config: Config): void {
                   agent: step.agent,
                   role: step.role,
                   verdict: step.verdict?.verdict ?? null,
+                  outputSummary: step.outputSummary,
                 })),
               })),
             })),
@@ -304,6 +316,106 @@ export function apply(ctx: Context, config: Config): void {
         }
       },
     }), 'ace-harness: instantiate route')
+
+    // API-driven run: executes a workflow instance/template against a known
+    // workspace and returns the terminal run result.
+    ctx.effect(() => webServer.register({
+      kind: 'exact',
+      path: '/plugins/dsh-ace-harness/run',
+      handler: async (req, res) => {
+        try {
+          if (req.method !== 'POST') {
+            res.writeHead(405, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end('method not allowed')
+            return
+          }
+          const body = JSON.parse(await readRequestBody(req, 1_000_000)) as {
+            workspace?: string
+            workflow?: string
+            values?: Record<string, string>
+          }
+          const workspacePath = body.workspace
+          const known = workspaceRegistry.list().map((workspace) => workspace.path)
+          if (!workspacePath || !known.includes(workspacePath)) {
+            res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end('workspace 不在已知工作区列表中')
+            return
+          }
+          if (!body.workflow) {
+            res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end('缺少 workflow（实例文件名或模板 id）')
+            return
+          }
+          const handle = await aceHarness.runApi({
+            workspace: workspacePath,
+            workflowRef: body.workflow,
+            values: body.values ?? {},
+          })
+          const result = await handle.result
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+          res.end(
+            JSON.stringify({
+              runId: handle.runId,
+              status: result.status,
+              verdict: result.verdict ?? null,
+              error: result.error,
+              states: result.stateOutcomes.map((outcome) => ({
+                state: outcome.state,
+                verdict: outcome.verdict.verdict,
+                supervisorScore: outcome.supervisorScore ?? null,
+                steps: outcome.steps.map((step) => ({
+                  step: step.step,
+                  type: step.agent ? 'agent' : step.subworkflowOutcome ? 'subworkflow' : 'script',
+                  verdict: step.verdict?.verdict ?? null,
+                  outputSummary: step.outputSummary,
+                })),
+              })),
+            }),
+          )
+        } catch (error) {
+          ctx.logger('ace-harness').warn(`run route failed: ${String(error)}`)
+          res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+          res.end(String(error))
+        }
+      },
+    }), 'ace-harness: run route')
+
+    // Packaged artwork: the ACE logo and favicon, served through an explicit
+    // allowlist (no path traversal).
+    const assetsDir = assetsRoot()
+    const ASSET_ALLOWLIST = new Set(['ace-logo.png', 'favicon.ico'])
+    ctx.effect(() => webServer.register({
+      kind: 'prefix',
+      path: '/plugins/dsh-ace-harness/assets',
+      handler: async (req, res) => {
+        let name: string
+        try {
+          name = decodeURIComponent(new URL(req.url ?? '/', 'http://x').pathname.split('/').pop() ?? '')
+        } catch {
+          res.writeHead(404)
+          res.end()
+          return
+        }
+        if (!ASSET_ALLOWLIST.has(name)) {
+          res.writeHead(404)
+          res.end()
+          return
+        }
+        try {
+          const { readFile } = await import('node:fs/promises')
+          const { fileURLToPath } = await import('node:url')
+          const data = await readFile(fileURLToPath(new URL(name, assetsDir)))
+          res.writeHead(200, {
+            'content-type': name.endsWith('.ico') ? 'image/x-icon' : 'image/png',
+            'cache-control': 'public, max-age=86400',
+          })
+          res.end(data)
+        } catch {
+          res.writeHead(404)
+          res.end()
+        }
+      },
+    }), 'ace-harness: assets route')
   }
 
   registerWebSurface()

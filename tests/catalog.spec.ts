@@ -28,16 +28,23 @@ describe('built-in catalog', () => {
     }
   })
 
-  it('ships the three built-in workflow templates, all reference-consistent', async () => {
+  it('ships the four built-in workflow templates, all reference-consistent', async () => {
     const templates = await loadBuiltinTemplates()
     expect(templates.map((t) => t.id)).toEqual(
-      expect.arrayContaining(['general-red-blue-review', 'issue-fix', 'software-delivery']),
+      expect.arrayContaining(['general-red-blue-review', 'issue-fix', 'software-delivery', 'simple-script-pipeline']),
     )
     const agents = await loadBuiltinAgents()
     const known = new Set(agents.map((a) => a.name))
     for (const template of templates) {
       const errors = validateWorkflowReferences(template.config, known)
       expect(errors, `${template.id} has reference errors`).toEqual([])
+    }
+    // The script pipeline uses binary success/fail transitions and no agents.
+    const pipeline = templates.find((t) => t.id === 'simple-script-pipeline')!
+    for (const state of pipeline.config.workflow.states) {
+      for (const transition of state.transitions) {
+        expect(['success', 'fail']).toContain(transition.condition.verdict)
+      }
     }
   })
 })

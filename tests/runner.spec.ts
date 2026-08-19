@@ -429,6 +429,79 @@ describe('runStateMachine', () => {
     expect(exec.supervisorNote).toBeUndefined()
   })
 
+  it('runs a script-only pipeline end to end with binary transitions', async () => {
+    const config: WorkflowConfig = {
+      workflow: {
+        name: '脚本流水线',
+        mode: 'state-machine',
+        maxTransitions: 10,
+        states: [
+          {
+            name: '检查',
+            steps: [{ name: '校验输入', type: 'script', script: 'return { output: "通过", success: context.requirements !== "" }' }],
+            transitions: [
+              { to: '转换', condition: { verdict: 'success' }, priority: 10 },
+              { to: '失败', condition: { verdict: 'fail' }, priority: 20 },
+            ],
+            isInitial: true,
+            isFinal: false,
+          },
+          {
+            name: '转换',
+            steps: [{ name: '大写', type: 'script', script: 'return { output: context.priorStepEvidence.toUpperCase().slice(0, 40), success: true }' }],
+            transitions: [{ to: '完成', condition: { verdict: 'success' }, priority: 10 }],
+            isInitial: false,
+            isFinal: false,
+          },
+          {
+            name: '失败',
+            steps: [{ name: '记录', type: 'script', script: 'return { output: "失败", success: true }' }],
+            transitions: [],
+            isInitial: false,
+            isFinal: true,
+          },
+          {
+            name: '完成',
+            steps: [{ name: '汇总', type: 'script', script: 'return { output: "完成", success: true }' }],
+            transitions: [],
+            isInitial: false,
+            isFinal: true,
+          },
+        ],
+      },
+    }
+    const executor: StepExecutor = {
+      async runAgentStep() {
+        throw new Error('脚本流水线不应启动 Agent 步骤')
+      },
+      async runSubworkflowStep() {
+        throw new Error('脚本流水线不应启动子工作流')
+      },
+    }
+    const options: EngineRunOptions = {
+      config,
+      runId: 'run-script-ok',
+      configFile: 'script.yaml',
+      inputs: { requirements: 'hello' },
+      parent: fakeParent,
+      signal: new AbortController().signal,
+      executor,
+      persist: async () => {},
+      load: async () => null,
+      resolveSubworkflow: async () => config,
+      askHumanTransition: async ({ candidates }) => candidates[0] ?? '',
+    }
+    const success = await runStateMachine(options)
+    expect(success.status).toBe('completed')
+    expect(success.verdict).toBe('success')
+    expect(success.stateOutcomes.map((o) => o.state)).toEqual(['检查', '转换', '完成'])
+
+    const failOptions: EngineRunOptions = { ...options, runId: 'run-script-fail', inputs: { requirements: '' } }
+    const failed = await runStateMachine(failOptions)
+    expect(failed.status).toBe('completed')
+    expect(failed.stateOutcomes.map((o) => o.state)).toEqual(['检查', '失败'])
+  })
+
   it('runs parallel segments concurrently', async () => {
     const config: WorkflowConfig = {
       workflow: {

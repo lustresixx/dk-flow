@@ -21,6 +21,7 @@
     "lib/**/*.js",
     "lib/**/*.d.ts",
     "resources/**/*",
+    "assets/**/*",
     "cordis.patch.yml",
     "compatibility.json",
     "README.md",

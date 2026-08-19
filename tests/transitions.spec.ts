@@ -27,6 +27,13 @@ describe('matchCondition', () => {
     expect(matchCondition({ verdict: 'fail' }, verdict('pass'))).toBe(false)
   })
 
+  it('aliases the binary success verdict with the legacy pass', () => {
+    expect(matchCondition({ verdict: 'success' }, verdict('success'))).toBe(true)
+    expect(matchCondition({ verdict: 'success' }, verdict('pass'))).toBe(true)
+    expect(matchCondition({ verdict: 'pass' }, verdict('success'))).toBe(true)
+    expect(matchCondition({ verdict: 'success' }, verdict('fail'))).toBe(false)
+  })
+
   it('matches issue types, severities, and counts', () => {
     const v = verdict('conditional_pass', [
       { type: 'security', severity: 'critical', description: 'x' },
@@ -96,7 +103,7 @@ describe('joinSegment', () => {
   })
 
   it('quorum passes at the quorum count', () => {
-    expect(joinSegment([verdict('pass'), verdict('pass'), verdict('fail')], { mode: 'quorum', quorum: 2 })?.verdict).toBe('pass')
+    expect(joinSegment([verdict('pass'), verdict('pass'), verdict('fail')], { mode: 'quorum', quorum: 2 })?.verdict).toBe('success')
     expect(joinSegment([verdict('pass'), verdict('fail'), verdict('fail')], { mode: 'quorum', quorum: 2 })?.verdict).toBe('fail')
   })
 })

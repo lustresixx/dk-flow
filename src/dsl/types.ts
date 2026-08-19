@@ -17,13 +17,13 @@ export type AgentRoleType = 'normal' | 'supervisor'
 /** Role a step plays inside an adversarial review state. */
 export type StepRole = 'attacker' | 'defender' | 'judge'
 
-export type Verdict = 'pass' | 'conditional_pass' | 'fail'
+export type Verdict = 'success' | 'fail' | 'pass' | 'conditional_pass'
 
 export type IssueType = 'design' | 'implementation' | 'test' | 'performance' | 'security'
 
 export type IssueSeverity = 'critical' | 'major' | 'minor'
 
-export type StepType = 'agent' | 'subworkflow'
+export type StepType = 'agent' | 'script' | 'subworkflow'
 
 /** Built-in agent catalog entry (ported subset of the ACE role config). */
 export interface AgentDefinition {
@@ -146,6 +146,8 @@ export interface WorkflowStep {
   /** Subworkflow config file (shorthand for `subworkflow.configFile`). */
   workflow?: string
   subworkflow?: Partial<SubworkflowReference>
+  /** JavaScript source for `type: script` steps (node:vm, returns JSON). */
+  script?: string
   inputs?: SubworkflowInputs
   result?: SubworkflowResultMapping
   runtime?: SubworkflowRuntime

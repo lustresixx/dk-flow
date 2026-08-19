@@ -1,0 +1,471 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9500;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(160deg, #1b1d27 0%, #23252e 55%, #1b1d27 100%);
+  color: #e6e6ee;
+  font-family: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.logo {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: #ffffff;
+  padding: 3px;
+  box-sizing: border-box;
+}
+
+.title {
+  font-weight: 700;
+  font-size: 16px;
+  white-space: nowrap;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+  justify-content: center;
+}
+
+.tab,
+.tabActive {
+  border: none;
+  background: transparent;
+  color: #9a9ab0;
+  padding: 7px 16px;
+  border-radius: 10px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.tabActive {
+  background: linear-gradient(135deg, #4f5bd5, #6d5bd5);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.close {
+  border: none;
+  background: transparent;
+  color: #9a9ab0;
+  font-size: 22px;
+  cursor: pointer;
+  padding: 0 6px;
+  line-height: 1;
+}
+
+.errorBar {
+  padding: 8px 18px;
+  background: rgba(248, 113, 113, 0.16);
+  color: #ffb3b3;
+  font-size: 13px;
+}
+
+.noticeBar {
+  padding: 8px 18px;
+  background: rgba(251, 191, 36, 0.12);
+  color: #ffd07a;
+  font-size: 13px;
+}
+
+.body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.sidebar {
+  width: 300px;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.item,
+.itemActive {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: transparent;
+  color: #e6e6ee;
+  padding: 10px 12px;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+}
+
+.item:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.itemActive {
+  border-color: #4f5bd5;
+  background: rgba(79, 91, 213, 0.12);
+}
+
+.itemName {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.itemMeta {
+  font-size: 12px;
+  color: #9a9ab0;
+}
+
+.itemMeta[data-status='running'],
+.itemMeta[data-status='preparing'] {
+  color: #7fb3ff;
+}
+
+.itemMeta[data-status='completed'] {
+  color: #7dd97d;
+}
+
+.itemMeta[data-status='failed'],
+.itemMeta[data-status='crashed'] {
+  color: #ff9d9d;
+}
+
+.itemMeta[data-status='waiting-human'] {
+  color: #ffd07a;
+}
+
+.empty {
+  color: #9a9ab0;
+  font-size: 13px;
+  padding: 8px;
+}
+
+.main {
+  flex: 1;
+  overflow-y: auto;
+  padding: 22px 28px;
+}
+
+.welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  height: 100%;
+  color: #9a9ab0;
+  text-align: center;
+}
+
+.welcomeLogo {
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
+  background: #ffffff;
+  padding: 8px;
+  box-sizing: border-box;
+  opacity: 0.9;
+}
+
+.welcome h2 {
+  color: #e6e6ee;
+  margin: 0;
+}
+
+.welcome p {
+  margin: 0;
+  font-size: 14px;
+  max-width: 460px;
+}
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.detailTitle {
+  margin: 0;
+  font-size: 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.detailDesc {
+  margin: 0;
+  color: #9a9ab0;
+  font-size: 13px;
+}
+
+.featured {
+  font-size: 11px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #4f5bd5, #6d5bd5);
+  color: #ffffff;
+}
+
+.sectionTitle {
+  margin: 6px 0 0;
+  font-size: 14px;
+  color: #c6c6da;
+}
+
+.stateList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.stateItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.stateName {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.stateSteps {
+  font-size: 12px;
+  color: #9a9ab0;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 560px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.label {
+  font-size: 13px;
+  color: #9a9ab0;
+}
+
+.required {
+  color: #ff9d9d;
+}
+
+.field input,
+.field textarea,
+.field select {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #e6e6ee;
+  padding: 8px 10px;
+  font-size: 14px;
+  font-family: inherit;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.primary,
+.secondary,
+.danger {
+  border-radius: 10px;
+  border: 1px solid transparent;
+  padding: 8px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.primary {
+  background: linear-gradient(135deg, #4f5bd5, #6d5bd5);
+  color: #ffffff;
+}
+
+.primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.secondary {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #e6e6ee;
+}
+
+.danger {
+  background: transparent;
+  border-color: rgba(248, 113, 113, 0.4);
+  color: #ff9d9d;
+}
+
+.errorText {
+  color: #ff9d9d;
+  font-size: 13px;
+  margin: 0;
+}
+
+.progressTrack {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+  max-width: 640px;
+}
+
+.progressFill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #4f5bd5, #34d399);
+}
+
+.runTimeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.runStateItem {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.03);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.runStateHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.runStateName {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.verdictBadge {
+  font-size: 11px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #9a9ab0;
+}
+
+.verdictBadge[data-verdict='success'],
+.verdictBadge[data-verdict='pass'] {
+  color: #34d399;
+  border-color: rgba(52, 211, 153, 0.4);
+  background: rgba(52, 211, 153, 0.1);
+}
+
+.verdictBadge[data-verdict='fail'] {
+  color: #f87171;
+  border-color: rgba(248, 113, 113, 0.4);
+  background: rgba(248, 113, 113, 0.1);
+}
+
+.verdictBadge[data-verdict='conditional_pass'] {
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.4);
+  background: rgba(251, 191, 36, 0.1);
+}
+
+.scoreBadge {
+  font-size: 11px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  color: #7fb3ff;
+  border: 1px solid rgba(127, 179, 255, 0.35);
+}
+
+.stepTimeline {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  border-left: 2px solid rgba(255, 255, 255, 0.1);
+}
+
+.stepItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+
+.stepOutput {
+  margin: 2px 0 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  color: #c6c6da;
+  font-size: 12px;
+  font-family: 'Cascadia Code', Consolas, 'Courier New', monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+  width: 100%;
+}
+
+.stepName {
+  font-weight: 600;
+}
+
+.stepAgent {
+  color: #9a9ab0;
+  font-size: 12px;
+}
+
+.stepRole {
+  font-size: 11px;
+  color: #7fb3ff;
+}
+
+.supervisorNote {
+  margin: 0;
+  font-size: 12px;
+  color: #c6c6da;
+  border-top: 1px dashed rgba(255, 255, 255, 0.12);
+  padding-top: 6px;
+}

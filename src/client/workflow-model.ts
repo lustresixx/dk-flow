@@ -36,6 +36,14 @@ const AUTO_COLUMNS = 5
 const AUTO_SPACING_X = 260
 const AUTO_SPACING_Y = 180
 
+/** Verdict edge colors on the canvas. */
+const EDGE_COLORS: Record<string, string> = {
+  success: '#34d399',
+  pass: '#34d399',
+  fail: '#f87171',
+  conditional_pass: '#fbbf24',
+}
+
 /** Convert a config into React Flow nodes and edges (states + transitions). */
 export function configToGraph(config: WorkflowConfig): { nodes: StateNode[]; edges: TransitionEdge[] } {
   const nodes: StateNode[] = config.workflow.states.map((state, index) => ({
@@ -50,11 +58,18 @@ export function configToGraph(config: WorkflowConfig): { nodes: StateNode[]; edg
   const edges: TransitionEdge[] = []
   for (const state of config.workflow.states) {
     for (const transition of state.transitions) {
+      const verdict = transition.condition.verdict ?? ''
+      const color = EDGE_COLORS[verdict] ?? '#6b7280'
       edges.push({
         id: `e-${state.name}-${transition.to}-${edges.length}`,
         source: state.name,
         target: transition.to,
-        label: transition.label ?? transition.condition.verdict ?? '',
+        label: transition.label ?? verdict ?? '',
+        style: { stroke: color, strokeWidth: 2 },
+        labelStyle: { fill: '#f3f4f6', fontSize: 11, fontWeight: 600 },
+        labelBgStyle: { fill: color, fillOpacity: 0.9 },
+        labelBgPadding: [6, 3] as [number, number],
+        labelBgBorderRadius: 6,
         data: { transition },
       })
     }
@@ -101,8 +116,9 @@ export interface StepDraft {
   agent: string
   role: '' | 'attacker' | 'defender' | 'judge'
   task: string
-  type: 'agent' | 'subworkflow'
+  type: 'agent' | 'script' | 'subworkflow'
   workflowRef: string
+  script: string
   parallelGroup: string
 }
 
@@ -114,8 +130,9 @@ export function stepToDraft(step: WorkflowStep): StepDraft {
     agent: step.agent ?? '',
     role: step.role ?? '',
     task: step.task ?? '',
-    type: step.type === 'subworkflow' ? 'subworkflow' : 'agent',
+    type: step.type ?? 'agent',
     workflowRef: step.workflow ?? step.subworkflow?.configFile ?? '',
+    script: step.script ?? '',
     parallelGroup: step.parallelGroup ?? '',
   }
 }
@@ -128,6 +145,14 @@ export function draftToStep(draft: StepDraft): WorkflowStep {
       type: 'subworkflow',
       workflow: draft.workflowRef,
       role: draft.role === '' ? undefined : draft.role,
+      parallelGroup: draft.parallelGroup === '' ? undefined : draft.parallelGroup,
+    }
+  }
+  if (draft.type === 'script') {
+    return {
+      name: draft.name,
+      type: 'script',
+      script: draft.script,
       parallelGroup: draft.parallelGroup === '' ? undefined : draft.parallelGroup,
     }
   }

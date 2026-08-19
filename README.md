@@ -1,162 +1,159 @@
 # dsh-ace-harness
 
-把 [ACEHarness](https://gitcode.com/Cangjie-SIG/ACEHarness) 的核心移植成 DeepSeek Harness 插件：**可命名、可持久、可恢复的 YAML 状态机工作流** + **defender/attacker/judge 对抗式多 Agent 评审** + **模板库与治理**。
+把 ACEHarness 的工作流核心移植成 DeepSeek Harness 插件：**可视化编排的状态机工作流** + **AI/脚本双节点** + **成功/失败二元流转（由 AI 判断）** + **对抗式多 Agent 评审**。
 
-- 状态机 DSL 与 ACE 的 `workflow.yaml` 字段/语义一致（verdict 转移、子工作流、并行组、熔断、恢复）
-- 每个步骤由专属角色的 DSH 子 Agent 执行（`ctx.subagents`，spawn/fork provider）；`preCommands` 预命令在步骤前于项目目录执行，输出注入上下文（非零退出/超时不中断步骤）
-- 内置 11 个精选 Agent（supervisor / 防守 / 攻击 / 裁决四队）与 3 个 workflow 模板（通用红蓝评审、缺陷定位修复、软件交付）
-- `/workflow` 斜杠命令 + `workflow_list` / `run_workflow` / `workflow_manage` 三个模型工具
-- Web GUI 浮动面板：模板浏览 → 填参 → 运行 → 进度看板
-- **可视化编排编辑器**（React Flow）：拖拽状态节点与 verdict 转移边、编辑步骤/角色/任务、从模板实例化后继续编排、保存即校验
-- 治理：运行目录持久化（state.json + audit.jsonl）、恢复、人工决策点、Git baseline 快照、supervisor 评分（1–10）与工作区级经验沉淀（experience.jsonl 回灌后续检查点）
+- 全屏「工作流工作台」后台页面：模板 / 工作流 / 运行记录三栏，React Flow 画布拖拽节点与连线
+- 节点三种类型：**AI 步骤**（专属角色 Agent）、**脚本步骤**（node:vm 执行 JS）、**子工作流**
+- 流转只分**成功 / 失败**，由 AI 依据实际产出判断；保留旧 pass/conditional_pass YAML 兼容
+- 内置 11 个角色 Agent（supervisor / defender / attacker / judge 四队）+ 4 个模板（通用红蓝评审、缺陷定位修复、软件交付、简单脚本流水线）
+- `/workflow` 斜杠命令 + `workflow_list` / `run_workflow` / `workflow_manage` 模型工具
+- 治理：运行持久化、断点恢复、人工决策点、supervisor 评分与经验沉淀、Git baseline、后台 job
+- ACEHarness 官方 logo 装饰界面
 
-## 安装
+## 明天早上直接看效果（两个入口）
 
-要求：Node.js ≥ 22，DeepSeek Harness `0.1.0-rc.7`（见 [compatibility.json](compatibility.json)）。
+### 入口 A：演示实例（已启动，无需凭据即可体验脚本工作流）
+
+浏览器打开 **http://127.0.0.1:4090**：
+
+1. 右下角「工作流」按钮 → 进入全屏工作台
+2. 「运行记录」页已有 4 条跑通的历史（成功路径 + 失败路径，含每步输出）
+3. 「模板」页选「简单脚本流水线」→ 填输入文本 → 「直接运行」（脚本节点不需要模型凭据）
+4. 「工作流」页选 `simple-script-pipeline` → 「编排」→ 拖节点、拖线连转移（默认成功边，可在右边改成失败）→ 保存
+5. 想跑 AI 步骤（红蓝评审等）需要 DeepSeek 凭据：见下方「安装到自己的 GUI」
+
+演示实例是隔离 profile（`ace-test`），不动你正在用的 :3080。
+
+### 入口 B：装进自己的 web profile（有凭据，可跑 AI 工作流）
 
 ```sh
-# 从本地源码安装（开发）
-dsh plugin --profile web add <本仓库路径>
+# 1) 挂载插件（不重启、不影响当前运行）
+dsh plugin --profile web add <插件仓库路径>
+# Windows 本地路径注意：pnpm 的 link: 盘符路径可能生成损坏 junction；
+# 可用手动 junction 代替（PowerShell）：
+#   New-Item -ItemType Junction -Path "$env:USERPROFILE\.dsh\profiles\web\node_modules\dsh-ace-harness" -Target "<仓库绝对路径>"
+#   并把 "dsh-ace-harness" 加进 "$env:USERPROFILE\.dsh\profiles\web\package.json" 的 dsh.profile.bundles
 
-# 发布后从 npm 安装
-dsh plugin --profile web add dsh-ace-harness
-```
-
-重启对应 profile 并刷新 Web UI。验证配置：
-
-```sh
+# 2) 验证合成
 dsh --profile web --dump-config
-# 预期出现：
-# - id: ace-harness
-#   name: dsh-ace-harness
+# 预期出现: - id: ace-harness / name: dsh-ace-harness
+
+# 3) 重启你的 dsh web（会短暂中断当前会话）并刷新页面
 ```
 
-> Windows + pnpm 的本地路径安装已知问题：`link:` 绝对盘符路径可能生成损坏的 junction。开发期可手动创建 junction：
-> `New-Item -ItemType Junction -Path "$env:USERPROFILE\.dsh\profiles\web\node_modules\dsh-ace-harness" -Target "<仓库绝对路径>"`，
-> 并把 `dsh-ace-harness` 加进 profile `package.json` 的 `dsh.profile.bundles`。
+之后在对话里说：`用 workflow 跑通用红蓝评审，评审对象是 X`，或点右下角「工作流」进工作台点「运行」。
 
-## 使用
+## 功能速览
 
-对话中直接说：
+### 工作流工作台（后台页面）
 
-```text
-/workflow list
-/workflow templates
-/workflow run general-red-blue-review --param projectRoot=E:\repo --param requirements=评审本次改动 --wait
-/workflow create issue-fix --param projectRoot=E:\repo --save
-/workflow runs
-/workflow show <runId>
-/workflow resume <runId>
-/workflow stop <runId>
-```
+- **模板页**：4 个内置模板（结构预览 + 参数表单），可「直接运行」或「创建并编排」
+- **工作流页**：项目/个人实例列表，运行 / 编排 / 删除
+- **运行记录页**：状态时间线、每步输出与 verdict、supervisor 评分、恢复 / 停止
+- **编辑器**：拖动状态节点布局；从节点右缘拖线到另一节点创建转移（默认「成功」，可在右侧检查器改成「失败」或「无条件」）；点节点编辑状态属性与步骤（AI / 脚本 / 子工作流）；保存即校验
 
-`/workflow run`（及 `resume`）不带 `--wait` 时以 **DSH 后台 job** 运行（`ace-workflow` 类型，归发起会话所有，可经 jobs 面板/工具查看与终止）；带 `--wait` 则在当前调用中同步等待终态。`workflow_manage stop` 与 job kill 等价。
+### 节点类型
 
-模型工具（自然语言即可触发）：
+| 类型 | 说明 |
+|---|---|
+| AI 步骤 | 选择角色 Agent（defender/attacker/judge 或 11 个内置角色），填写任务；judge 步骤结构化输出 verdict |
+| 脚本步骤 | 内联 JavaScript（node:vm 沙箱、10s 超时）；可用 `context.requirements` / `context.inputs` / `context.priorStateEvidence` / `context.priorStepEvidence`；返回 `{ output, success }`、`{ error }` 或裸值 |
+| 子工作流 | 引用另一个工作流配置（文件名/模板 id），独立 runId，结果映射回 verdict |
 
-- `workflow_list` — 列出模板与已保存的 workflow 实例
-- `run_workflow` — 运行实例或模板（模板先实例化），`wait=true` 同步等待终态
-- `workflow_manage` — runs / show / resume / stop / create
+### 成功/失败流转
 
-Web GUI 右下角有「ACE 工作流」浮动面板：浏览模板、填参数、一键运行、查看进度与各状态 verdict。
+状态转移条件为 `{ verdict: success }` 或 `{ verdict: fail }`，由最后一个步骤的结论（AI 判断或脚本返回值）驱动；无匹配时进入人工决策。旧版 ACE 的 `pass` / `conditional_pass` YAML 仍可加载运行。
 
-可视化编排：
-
-1. 「模板」页展开模板 → 「创建并编排」：填参数与实例文件名，进入编辑器
-2. 「工作流」页对已有实例点「编排」：加载 YAML 到编辑器
-3. 编辑器内：拖动节点布局、从节点右缘拖到另一节点创建转移边、点节点编辑状态/步骤/角色/任务/并行组、点边编辑 verdict 条件与优先级
-4. 「保存」经宿主路由校验后写入 `<workspace>/.dsh/workflows/`
-
-## 工作流 DSL
-
-与 ACEHarness `workflow.yaml` 兼容（字段语义一致，见 `src/dsl/schema.ts`）：
+## 工作流 DSL（workflow.yaml）
 
 ```yaml
 workflow:
-  name: 通用红蓝评审
+  name: 简单脚本流水线
   mode: state-machine
-  maxTransitions: 30
-  supervisor:
-    enabled: true
-    agent: default-supervisor
-    stageReviewEnabled: true
-    checkpointAdviceEnabled: true
-    scoringEnabled: true
-    experienceEnabled: true
+  maxTransitions: 10
   states:
-    - name: 方案
+    - name: 输入检查
       isInitial: true
       steps:
-        - { name: 方案设计, agent: architect, role: defender, task: 基于需求形成可执行方案 }
-        - { name: 方案挑战, agent: solution-breaker, role: attacker, task: 从边界、风险和遗漏角度挑战方案 }
-        - { name: 方案裁决, agent: design-judge, role: judge, task: 综合方案和挑战意见，给出 verdict }
+        - name: 检查输入
+          type: script
+          script: |
+            if (!context.requirements) return { output: '输入为空', success: false }
+            return { output: '输入检查通过：' + context.requirements, success: true }
       transitions:
-        - { to: 执行, condition: { verdict: pass }, priority: 10, label: 方案通过 }
-        - { to: 方案, condition: { verdict: conditional_pass }, priority: 20, label: 补充方案 }
-  ...
+        - { to: 转换, condition: { verdict: success }, priority: 10, label: 成功 }
+        - { to: 失败, condition: { verdict: fail }, priority: 20, label: 失败 }
+    # ... AI 步骤示例：
+    # - name: 方案裁决
+    #   agent: design-judge
+    #   role: judge
+    #   task: 判断方案是否成立，给出 verdict
 context:
-  projectRoot: ""
-  workspaceMode: in-place
   requirements: ""
 ```
 
-执行语义：
+## API（示例）
 
-- 每个状态按 segment 执行（`parallelGroup` 相同的步骤并发）；**最后一个 segment 的 verdict 决定状态结论**
-- 对抗状态（`reviewPolicy.mode: adversarial` 或显式 role）中，attacker/judge 只读本状态前置步骤的证据，judge 输出 `pass / conditional_pass / fail`
-- 转移按 priority 升序取第一个命中；`conditional_pass` 无匹配规则时自转移；无任何匹配进入人工决策（持久化等待，可 resume）
-- `maxTransitions` / `maxSelfTransitions` 熔断；每步后持久化，中断可从断点恢复
-- 子工作流步骤：`type: subworkflow` + `workflow` 配置引用，独立 runId，结果按 `result` 映射回 verdict
+```sh
+# 列出模板 / 工作流 / 运行（GET）
+curl http://127.0.0.1:4090/plugins/dsh-ace-harness/state
+
+# 读取/保存工作流 YAML（GET/POST，工作区白名单 + 文件名白名单）
+curl "http://127.0.0.1:4090/plugins/dsh-ace-harness/workflows/simple-script-pipeline.yaml?workspace=E:%5CCode%5CtypeScript%5Cdeepseek-harness"
+
+# 模板实例化（POST JSON）
+curl -X POST http://127.0.0.1:4090/plugins/dsh-ace-harness/instantiate \
+  -H "content-type: application/json" \
+  -d '{"templateId":"simple-script-pipeline","values":{"requirements":"hi"}}'
+
+# 运行工作流并等待终态（POST JSON；脚本工作流无需凭据，AI 步骤请用聊天命令）
+curl -X POST http://127.0.0.1:4090/plugins/dsh-ace-harness/run \
+  -H "content-type: application/json" \
+  -d '{"workspace":"E:\\Code\\typeScript\\deepseek-harness","workflow":"simple-script-pipeline","values":{"requirements":"hello api test"}}'
+```
+
+响应示例：`{"runId":"run-...","status":"completed","verdict":"success","states":[{"state":"输入检查","verdict":"success","steps":[{"step":"检查输入","type":"script","verdict":"success","outputSummary":"输入检查通过：hello api test"}]},...]}`
 
 ## 存储布局
 
-- workflow 实例：`<workspace>/.dsh/workflows/*.yaml`（项目）与 `$DSH_HOME/workflows/*.yaml`（个人），项目同名覆盖个人
+- workflow 实例：`<workspace>/.dsh/workflows/*.yaml`（项目）与 `$DSH_HOME/workflows/*.yaml`（个人）
 - 运行数据：`<workspace>/.ace-workflows/runs/<runId>/`（`state.json` + `audit.jsonl` + `git-baseline.json`）
-- 经验沉淀：`<workspace>/.ace-workflows/experience.jsonl`（工作区级，最近记录回灌 supervisor 检查点）
-- 内置模板与 Agent：插件包内 `resources/`
+- 经验沉淀：`<workspace>/.ace-workflows/experience.jsonl`
 
-## 配置
-
-cordis.patch.yml 行内 `config`：
+## 配置（cordis.patch.yml 行内 config）
 
 ```yaml
 - insert:
     - id: ace-harness
       name: dsh-ace-harness
       config:
-        subagentProvider: spawn      # 步骤执行 provider（spawn | fork）
-        model: ''                    # 可选：所有步骤强制使用的模型
-        runDirName: .ace-workflows   # 运行存储目录名
-        maxSubworkflowDepth: 8       # 子工作流嵌套上限
-        maxConcurrentRuns: 4         # 单服务实例并发运行上限
-        preCommandTimeoutMs: 300000  # 单个预命令超时（毫秒）
+        subagentProvider: spawn      # AI 步骤执行 provider（spawn | fork）
+        model: ''                    # 可选：所有 AI 步骤强制使用的模型
+        runDirName: .ace-workflows
+        maxSubworkflowDepth: 8
+        maxConcurrentRuns: 4
+        preCommandTimeoutMs: 300000
 ```
 
 ## 开发
 
 ```sh
 pnpm install
-pnpm build          # 服务端 + 客户端双面构建
+pnpm build        # 服务端 + 客户端双面构建
 pnpm typecheck
-pnpm test           # 54 个单测：DSL/verdict/转移/运行器/模板/目录
+pnpm test         # 86 个单测
 ```
 
-隔离验证（不影响正在使用的 profile）：
-
-```sh
-dsh plugin --profile ace-test add .
-dsh --profile ace-test --port 3091   # 另起实例
-curl http://127.0.0.1:3091/plugins/dsh-ace-harness/state
-```
+隔离验证：`dsh plugin --profile ace-test add .` → `dsh --profile ace-test --port 4090`。架构说明见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ## 已知限制
 
-- 步骤执行依赖 DSH 的 `spawn`/`fork` 子代理与可用的 LLM 凭据；未配置凭据时运行会以清晰错误失败并持久化 failed 状态
-- 后台运行以 DSH job 承载（进程内 job 注册表）；跨进程重启后 job 记录消失，但运行状态已持久化，可在同一工作区 `/workflow resume` 继续
-- `allowedTools` 按 ACE→DSH 工具映射（Bash→bash、Read→read、Write→write、Edit→edit、Glob/Grep→glob）转为子代理工具白名单；未知 ACE 工具名被跳过
-- `preCommands` 以系统 shell 在项目目录执行（ACE 语义）；工作流配置即代码，请只运行可信来源的配置
-- 编辑器暂不覆盖的 DSL 字段：自定义 `custom` 条件表达式与 `constraints`/`skills` 等步骤级细节——其余常用字段（verdict/issueTypes/severities/问题数/优先级/标签/reviewPolicy 对抗模式/置信度）均可在编辑器内维护
+- **AI 步骤需要 DeepSeek 凭据**（`DEEPSEEK_API_KEY` 或 web Models 页写入的凭据）；凭据缺失时运行以清晰错误失败并持久化 failed 状态
+- 脚本步骤是工作流配置代码，与 `preCommands` 同信任等级，请只运行可信来源的配置；`vm` 超时为尽力而为，同步死循环无法被中断
+- 后台运行以 DSH job 承载（进程内注册表）；跨进程重启后 job 记录消失，但运行状态已持久化，可 `/workflow resume` 继续
+- API 的 `/run` 路由用合成父会话：脚本工作流可完整运行，AI 步骤需要真实会话（请用聊天命令或工具）
+- 编辑器暂不覆盖：`custom` 条件表达式、`constraints`/`skills` 等步骤级细节（可直接改 YAML）
 
 ## 许可证与署名
 
-Apache-2.0。内置 Agent 角色文案与 workflow 模板移植自 ACEHarness（Apache-2.0 with Runtime Library Exception，© 仓颉团队），保留其语义并适配 DSH 工具/模型。
+Apache-2.0。内置 Agent 角色文案与工作流模板移植自 ACEHarness（Apache-2.0 with Runtime Library Exception，© 仓颉团队），界面图标使用 ACEHarness 官方 logo。

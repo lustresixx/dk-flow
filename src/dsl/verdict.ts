@@ -10,7 +10,15 @@
 import { issueSchema } from './schema.js'
 import type { Issue, StepVerdict, Verdict } from './types.js'
 
-const VERDICTS: readonly Verdict[] = ['pass', 'conditional_pass', 'fail']
+const VERDICTS: readonly Verdict[] = ['success', 'pass', 'conditional_pass', 'fail']
+
+/**
+ * Whether two verdict values refer to the same outcome: `success` is the
+ * binary alias of the legacy `pass`.
+ */
+export function verdictEquals(a: Verdict, b: Verdict): boolean {
+  return a === b || (a === 'success' && b === 'pass') || (a === 'pass' && b === 'success')
+}
 
 /** Extract the first balanced `{…}` JSON object from a span of text. */
 function extractBalancedJson(text: string): string | undefined {
@@ -116,11 +124,11 @@ export function extractVerdict(output: string): StepVerdict | undefined {
 
 /**
  * Aggregate several step verdicts the way ACE joins parallel segments:
- * fail outranks conditional_pass, which outranks pass.
+ * fail outranks conditional_pass, which outranks pass/success.
  */
 export function aggregateVerdicts(verdicts: readonly StepVerdict[]): StepVerdict | undefined {
   if (verdicts.length === 0) return undefined
-  const rank = { fail: 0, conditional_pass: 1, pass: 2 } as const
+  const rank = { fail: 0, conditional_pass: 1, success: 2, pass: 2 } as const
   let worst = verdicts[0]!
   for (const verdict of verdicts.slice(1)) {
     if (rank[verdict.verdict] < rank[worst.verdict]) worst = verdict

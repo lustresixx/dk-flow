@@ -13,6 +13,7 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { assertObjectJsonSchema, type ObjectJsonSchema, type ToolRestriction } from '@deepseek-ai/dsh-tools'
 import type { SubagentStartRequest } from '@deepseek-ai/dsh-subagent'
 import type { JobId, JobStart } from '@deepseek-ai/dsh-jobs'
+import type { SessionId } from '@deepseek-ai/dsh-session'
 import '@deepseek-ai/dsh-user-questions'
 
 declare module '@deepseek-ai/dsh-jobs' {
@@ -343,6 +344,7 @@ export default class AceHarnessService extends Service {
       executor,
       linked.signal,
       () => loadRunState(workspace, runId, this.config.runDirName),
+      input.inputs ?? {},
     )
 
     this.ctx.emit('ace/workflow-start', { runId, workflowName: input.workflow.config.workflow.name })
@@ -399,6 +401,7 @@ export default class AceHarnessService extends Service {
       executor,
       linked.signal,
       () => loadRunState(workspace, input.runId, this.config.runDirName),
+      {},
     )
     const begin = this.beginRun(workspace, input.runId, options)
     if (input.mode === 'job') {
@@ -490,6 +493,44 @@ export default class AceHarnessService extends Service {
     return loadRunState(workspace, runId, this.config.runDirName)
   }
 
+  /**
+   * Run a workflow through the HTTP API with a synthetic parent bound to the
+   * given workspace. Script-only workflows run fully without credentials;
+   * steps that spawn subagents fail loudly because the synthetic parent is
+   * not a live agent — use the chat command/tool for AI workflows.
+   */
+  async runApi(input: {
+    workspace: string
+    workflowRef: string
+    values: Record<string, string>
+  }): Promise<AceRunHandle> {
+    const instance = await loadWorkflow(input.workspace, input.workflowRef)
+    let workflow: { config: WorkflowConfig; configFile: string }
+    if (instance) {
+      workflow = { config: instance.config, configFile: instance.file }
+    } else {
+      await this.catalogReady
+      const template = [...this.templates]
+        .filter((candidate) => candidate.id === input.workflowRef)
+        .sort((a, b) => a.version.localeCompare(b.version))
+        .at(-1)
+      if (!template) throw new Error(`未找到 workflow 实例或模板「${input.workflowRef}」`)
+      const instantiated = await this.instantiate(input.workflowRef, undefined, input.values, {})
+      workflow = { config: instantiated.config, configFile: input.workflowRef }
+    }
+    const parent = {
+      id: 'api-runner' as unknown as SessionId,
+      session: { header: { cwd: input.workspace } },
+    } as unknown as Agent
+    return this.startRun({
+      parent,
+      signal: new AbortController().signal,
+      workflow,
+      inputs: input.values,
+      mode: 'foreground',
+    })
+  }
+
   /** The workspace root the service uses for one agent. */
   workspaceOf(agent: Agent): string {
     return workspaceRoot(agent.session.header.cwd, process.cwd())
@@ -503,6 +544,7 @@ export default class AceHarnessService extends Service {
     executor: StepExecutor,
     signal: AbortSignal,
     load: () => Promise<RunState | null>,
+    inputs: Record<string, string>,
   ): EngineRunOptions {
     const persist = async (runState: RunState): Promise<void> => {
       await saveRunState(workspace, runState, this.config.runDirName)
@@ -518,7 +560,7 @@ export default class AceHarnessService extends Service {
       config: workflow.config,
       runId,
       configFile: workflow.configFile,
-      inputs: {},
+      inputs,
       parent,
       signal,
       executor,
@@ -646,6 +688,7 @@ export default class AceHarnessService extends Service {
           childExecutor,
           input.signal,
           () => loadRunState(workspace, childRunId, service.config.runDirName),
+          { requirements: input.inheritedRequirements },
         )
         const childResult = await runStateMachine(childOptions)
         const outcome =

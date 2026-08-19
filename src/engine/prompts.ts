@@ -60,13 +60,14 @@ const ROLE_INTRO: Record<'attacker' | 'defender' | 'judge' | 'neutral', string> 
 
 const JUDGE_OUTPUT_INSTRUCTION = [
   '最终必须单独输出一行裁决标签，格式严格为：',
-  '<workflow-verdict>{"verdict":"pass|conditional_pass|fail","issues":[{"type":"design|implementation|test|performance|security","severity":"critical|major|minor","description":"..."}],"rationale":"..."}</workflow-verdict>',
-  '其中 verdict 取值：pass（通过）、conditional_pass（有条件通过，需补充）、fail（不通过，需重做）。',
+  '<workflow-verdict>{"verdict":"success|fail","issues":[{"type":"design|implementation|test|performance|security","severity":"critical|major|minor","description":"..."}],"rationale":"..."}</workflow-verdict>',
+  '其中 verdict 取值：success（成功，放行到下一状态）、fail（失败，走失败转移）。由你依据证据判断，不要机械照搬检查清单。',
 ]
 
 const STEP_OUTPUT_INSTRUCTION = [
   '完成后请在最后单独输出一行结论标签：',
-  '<step-conclusion>{"verdict":"pass|conditional_pass|fail","issues":[],"rationale":"结论摘要"}</step-conclusion>',
+  '<step-conclusion>{"verdict":"success|fail","issues":[],"rationale":"结论摘要"}</step-conclusion>',
+  'success 表示本步骤达成目标，fail 表示未达成。由你依据实际产出判断。',
 ]
 
 /**

@@ -1,0 +1,22 @@
+apiVersion: aceharness.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  id: simple-script-pipeline
+  version: 1.0.0
+  name: 简单脚本流水线
+  description: 纯脚本节点串联的示例流水线：无需模型凭据即可运行，适合验证编排引擎与学习工作流 DSL。
+  category: 示例
+  tags: [示例, 脚本, 流水线]
+  featured: true
+spec:
+  entrypoint: workflow.yaml
+  mode: state-machine
+  compatibility:
+    aceharness: ">=1.0.0-rc.8 <2.0.0"
+  parameters:
+    - { id: workflowName, label: 工作流名称, type: string, bind: /workflow/name, required: true, default: 简单脚本流水线 }
+    - { id: requirements, label: 输入文本, type: text, bind: /context/requirements, default: "" }
+  dependencies:
+    agents: []
+    skills: []
+    subworkflows: []

@@ -7,6 +7,7 @@
  */
 import type { StateMachineState, StepVerdict, WorkflowConfig, WorkflowStep } from '../dsl/types.js'
 import { buildStateEvidence, buildStepEvidence } from './prompts.js'
+import { runScriptNode } from './script-runner.js'
 import {
   assertSelfTransitionBudget,
   assertTransitionBudget,
@@ -322,9 +323,31 @@ async function executeState(
       if (completedKeys.has(key)) {
         return completedSteps.find((item) => item.key === key)!
       }
-      const role = step.role ?? inferRole(step, machineState)
+      const role = step.type === 'script' ? 'neutral' : (step.role ?? inferRole(step, machineState))
       let outcome: StepOutcome
-      if (step.type === 'subworkflow') {
+      if (step.type === 'script') {
+        const scriptResult = runScriptNode(step.script ?? '', {
+          requirements: runState.context.requirements || runState.inputs.requirements || '',
+          state: machineState.name,
+          priorStepEvidence: buildStepEvidence(completedSteps),
+          priorStateEvidence: buildStateEvidence(runState.stateOutcomes),
+          inputs: runState.inputs,
+        })
+        outcome = {
+          key,
+          state: machineState.name,
+          step: step.name,
+          role: 'neutral',
+          outputSummary: scriptResult.output,
+          verdict: {
+            verdict: scriptResult.success ? 'success' : 'fail',
+            issues: [],
+            rationale: scriptResult.error ?? '',
+          },
+          startedAt: now(),
+          finishedAt: now(),
+        }
+      } else if (step.type === 'subworkflow') {
         const configFile = step.workflow?.trim() || step.subworkflow?.configFile?.trim()
         if (!configFile) throw new EngineError(`子工作流步骤「${step.name}」缺少配置`, 'NO_MATCH')
         const child = await executor.runSubworkflowStep({

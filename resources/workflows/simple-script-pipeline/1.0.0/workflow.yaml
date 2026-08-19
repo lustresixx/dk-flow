@@ -1,0 +1,82 @@
+workflow:
+  name: 简单脚本流水线
+  description: 脚本节点串联的示例：输入检查 → 转换 → 汇总，成功/失败二元流转
+  mode: state-machine
+  maxTransitions: 10
+  states:
+    - name: 输入检查
+      description: 校验输入文本并原样输出
+      isInitial: true
+      isFinal: false
+      maxSelfTransitions: 2
+      position: { x: 80, y: 220 }
+      steps:
+        - name: 检查输入
+          type: script
+          script: |
+            // 输入检查：context.requirements 是本次运行输入
+            if (!context.requirements || context.requirements.trim() === '') {
+              return { output: '输入为空，无法继续', success: false }
+            }
+            return {
+              output: '输入检查通过：' + context.requirements.trim(),
+              success: true,
+            }
+      transitions:
+        - { to: 转换, condition: { verdict: success }, priority: 10, label: 成功 }
+        - { to: 失败, condition: { verdict: fail }, priority: 20, label: 失败 }
+    - name: 转换
+      description: 把前一步的输出转为大写并统计长度
+      isInitial: false
+      isFinal: false
+      maxSelfTransitions: 2
+      position: { x: 380, y: 220 }
+      steps:
+        - name: 大写转换
+          type: script
+          script: |
+            // context.priorStateEvidence 携带已完成状态（输入检查）的产出摘要
+            const previous = context.priorStateEvidence || context.priorStepEvidence || ''
+            const upper = previous.toUpperCase()
+            return {
+              output: '转换结果（前 120 字符）：' + upper.slice(0, 120) + '…（共 ' + previous.length + ' 字符）',
+              success: true,
+            }
+      transitions:
+        - { to: 汇总, condition: { verdict: success }, priority: 10, label: 成功 }
+        - { to: 失败, condition: { verdict: fail }, priority: 20, label: 失败 }
+    - name: 汇总
+      description: 汇总全部步骤产出
+      isInitial: false
+      isFinal: true
+      position: { x: 680, y: 220 }
+      steps:
+        - name: 输出汇总
+          type: script
+          script: |
+            const summary = [
+              '=== 流水线执行汇总 ===',
+              '本次输入：' + (context.requirements || ''),
+              '',
+              context.priorStateEvidence || '',
+            ].join('\n')
+            return { output: summary, success: true }
+      transitions: []
+    - name: 失败
+      description: 失败终态：记录失败原因
+      isInitial: false
+      isFinal: true
+      position: { x: 380, y: 460 }
+      steps:
+        - name: 记录失败
+          type: script
+          script: |
+            return {
+              output: '流水线失败。最后一步产出：\n' + (context.priorStepEvidence || '（无）'),
+              success: true,
+            }
+      transitions: []
+context:
+  projectRoot: ""
+  workspaceMode: in-place
+  requirements: ""
