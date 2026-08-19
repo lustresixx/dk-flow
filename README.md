@@ -149,7 +149,7 @@ curl http://127.0.0.1:3091/plugins/dsh-ace-harness/state
 
 - 步骤执行依赖 DSH 的 `spawn`/`fork` 子代理与可用的 LLM 凭据；未配置凭据时运行会以清晰错误失败并持久化 failed 状态
 - 运行在发起命令/工具的进程中前台推进；后台 job 化与跨进程恢复尚未实现（中断后可用 `/workflow resume` 在同一工作区继续）
-- `allowedTools` 目录字段暂为元数据，未映射成 DSH 工具过滤器
+- `allowedTools` 按 ACE→DSH 工具映射（Bash→bash、Read→read、Write→write、Edit→edit、Glob/Grep→glob）转为子代理工具白名单；未知 ACE 工具名被跳过
 - 编辑器暂不覆盖的高级 DSL 字段：`issueTypes`/`severities`/`minIssueCount` 条件、`reviewPolicy`、自定义 `custom` 条件——这些保留在 YAML 里，可在编辑器的步骤/转移检查器中改动常用字段，高级字段直接改 YAML
 
 ## 许可证与署名

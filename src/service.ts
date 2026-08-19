@@ -10,7 +10,7 @@ import { isAbsolute, resolve } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-import { assertObjectJsonSchema, type ObjectJsonSchema } from '@deepseek-ai/dsh-tools'
+import { assertObjectJsonSchema, type ObjectJsonSchema, type ToolRestriction } from '@deepseek-ai/dsh-tools'
 import type { SubagentStartRequest } from '@deepseek-ai/dsh-subagent'
 import '@deepseek-ai/dsh-user-questions'
 import {
@@ -75,6 +75,31 @@ const VERDICT_OUTPUT_SCHEMA: ObjectJsonSchema = {
   required: ['verdict'],
 }
 assertObjectJsonSchema(VERDICT_OUTPUT_SCHEMA)
+
+/** ACE catalog tool names mapped onto DSH tool names. */
+const ACE_TOOL_MAP: Record<string, string> = {
+  Bash: 'bash',
+  Read: 'read',
+  Write: 'write',
+  Edit: 'edit',
+  Glob: 'glob',
+  Grep: 'glob',
+}
+
+/**
+ * Translate an ACE agent's allowedTools roster into a DSH tool allow-list.
+ * Unknown ACE names are skipped (they have no DSH counterpart); an empty
+ * result means no filter.
+ */
+export function toolFilterFor(allowedTools: readonly string[] | undefined): ToolRestriction | undefined {
+  if (!allowedTools || allowedTools.length === 0) return undefined
+  const allow = new Set<string>()
+  for (const name of allowedTools) {
+    const mapped = ACE_TOOL_MAP[name]
+    if (mapped) allow.add(mapped)
+  }
+  return allow.size > 0 ? { allow: [...allow] } : undefined
+}
 
 declare module '@deepseek-ai/cordis' {
   interface Events {
@@ -463,6 +488,8 @@ export default class AceHarnessService extends Service {
           signal: input.signal,
           agentOptions: service.config.model ? { model: service.config.model } : undefined,
           outputSchema: wantsSchema ? VERDICT_OUTPUT_SCHEMA : undefined,
+          toolFilter:
+            providerCaps?.toolFilter === true ? toolFilterFor(agentDef?.allowedTools) : undefined,
         }
         service.ctx.emit('ace/step-start', {
           runId: parentRunId,
