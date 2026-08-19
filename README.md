@@ -8,7 +8,7 @@
 - `/workflow` 斜杠命令 + `workflow_list` / `run_workflow` / `workflow_manage` 三个模型工具
 - Web GUI 浮动面板：模板浏览 → 填参 → 运行 → 进度看板
 - **可视化编排编辑器**（React Flow）：拖拽状态节点与 verdict 转移边、编辑步骤/角色/任务、从模板实例化后继续编排、保存即校验
-- 治理：运行目录持久化（state.json + audit.jsonl）、恢复、人工决策点、Git baseline 快照
+- 治理：运行目录持久化（state.json + audit.jsonl）、恢复、人工决策点、Git baseline 快照、supervisor 评分（1–10）与工作区级经验沉淀（experience.jsonl 回灌后续检查点）
 
 ## 安装
 
@@ -110,6 +110,7 @@ context:
 
 - workflow 实例：`<workspace>/.dsh/workflows/*.yaml`（项目）与 `$DSH_HOME/workflows/*.yaml`（个人），项目同名覆盖个人
 - 运行数据：`<workspace>/.ace-workflows/runs/<runId>/`（`state.json` + `audit.jsonl` + `git-baseline.json`）
+- 经验沉淀：`<workspace>/.ace-workflows/experience.jsonl`（工作区级，最近记录回灌 supervisor 检查点）
 - 内置模板与 Agent：插件包内 `resources/`
 
 ## 配置
