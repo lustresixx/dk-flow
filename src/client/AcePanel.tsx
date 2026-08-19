@@ -5,6 +5,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AceStateDto, StateParameterDto, StateRunDto, StateTemplateDto } from './types.ts'
+import { WorkflowEditor } from './WorkflowEditor.tsx'
 import styles from './AcePanel.module.css'
 
 type Tab = 'templates' | 'workflows' | 'runs'
@@ -26,12 +27,20 @@ export interface AcePanelProps {
   send: (text: string) => Promise<boolean>
 }
 
+/** Editor overlay state: raw yaml plus the save target. */
+interface EditorState {
+  yaml: string
+  workspacePath: string
+  fileName: string
+}
+
 export function AcePanel(props: AcePanelProps): JSX.Element {
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState<Tab>('templates')
   const [state, setState] = useState<AceStateDto | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [editor, setEditor] = useState<EditorState | null>(null)
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
@@ -60,6 +69,69 @@ export function AcePanel(props: AcePanelProps): JSX.Element {
     },
     [props],
   )
+
+  const editWorkflow = useCallback(
+    async (workspacePath: string, fileName: string): Promise<void> => {
+      try {
+        const response = await fetch(
+          `/plugins/dsh-ace-harness/workflows/${encodeURIComponent(fileName)}?workspace=${encodeURIComponent(workspacePath)}`,
+          { cache: 'no-store' },
+        )
+        if (!response.ok) {
+          setNotice(`读取 workflow 失败：${await response.text()}`)
+          return
+        }
+        setEditor({ yaml: await response.text(), workspacePath, fileName })
+        setOpen(false)
+      } catch (err) {
+        setNotice(`读取 workflow 失败：${(err as Error).message}`)
+      }
+    },
+    [],
+  )
+
+  const instantiateForEdit = useCallback(
+    async (templateId: string, values: Record<string, string>, workspacePath: string, fileName: string): Promise<void> => {
+      try {
+        const response = await fetch('/plugins/dsh-ace-harness/instantiate', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ templateId, values }),
+        })
+        if (!response.ok) {
+          setNotice(`实例化失败：${await response.text()}`)
+          return
+        }
+        setEditor({ yaml: await response.text(), workspacePath, fileName })
+        setOpen(false)
+      } catch (err) {
+        setNotice(`实例化失败：${(err as Error).message}`)
+      }
+    },
+    [],
+  )
+
+  if (editor) {
+    return (
+      <WorkflowEditor
+        initialYaml={editor.yaml}
+        workspacePath={editor.workspacePath}
+        fileName={editor.fileName}
+        agentNames={state?.agents.map((agent) => agent.name) ?? []}
+        onClose={() => {
+          setEditor(null)
+          setOpen(true)
+          void refresh()
+        }}
+        onSaved={() => {
+          setEditor(null)
+          setOpen(true)
+          setTab('workflows')
+          void refresh()
+        }}
+      />
+    )
+  }
 
   return (
     <div className={styles.host}>
@@ -99,10 +171,17 @@ export function AcePanel(props: AcePanelProps): JSX.Element {
             {notice ? <p className={styles.notice}>{notice}</p> : null}
             {!state && !error ? <p className={styles.empty}>加载中…</p> : null}
             {state && tab === 'templates' ? (
-              <TemplateTab templates={state.templates} run={run} />
+              <TemplateTab
+                templates={state.templates}
+                run={run}
+                editTemplate={(templateId, values, workspacePath, fileName) => {
+                  void instantiateForEdit(templateId, values, workspacePath, fileName)
+                }}
+                workspaces={state.workspaces}
+              />
             ) : null}
             {state && tab === 'workflows' ? (
-              <WorkflowTab workspaces={state.workspaces} run={run} />
+              <WorkflowTab workspaces={state.workspaces} run={run} onEdit={(workspacePath, fileName) => { void editWorkflow(workspacePath, fileName) }} />
             ) : null}
             {state && tab === 'runs' ? (
               <RunsTab workspaces={state.workspaces} run={run} currentSessionId={props.currentSessionId} />
@@ -118,9 +197,15 @@ export function AcePanel(props: AcePanelProps): JSX.Element {
   )
 }
 
-function TemplateTab(props: { templates: StateTemplateDto[]; run: (text: string) => Promise<void> }): JSX.Element {
+function TemplateTab(props: {
+  templates: StateTemplateDto[]
+  run: (text: string) => Promise<void>
+  editTemplate: (templateId: string, values: Record<string, string>, workspacePath: string, fileName: string) => void
+  workspaces: AceStateDto['workspaces']
+}): JSX.Element {
   const [expanded, setExpanded] = useState<string | null>(null)
   const [values, setValues] = useState<Record<string, string>>({})
+  const workspacePath = props.workspaces[0]?.path ?? ''
 
   if (props.templates.length === 0) return <p className={styles.empty}>没有内置模板</p>
   return (
@@ -148,7 +233,15 @@ function TemplateTab(props: { templates: StateTemplateDto[]; run: (text: string)
           </button>
           <p className={styles.cardDesc}>{template.description}</p>
           {expanded === template.id ? (
-            <ParameterForm template={template} values={values} setValues={setValues} run={props.run} />
+            <ParameterForm
+              template={template}
+              values={values}
+              setValues={setValues}
+              run={props.run}
+              editTemplate={(instanceValues, fileName) => {
+                props.editTemplate(template.id, instanceValues, workspacePath, fileName)
+              }}
+            />
           ) : null}
         </li>
       ))}
@@ -161,8 +254,10 @@ function ParameterForm(props: {
   values: Record<string, string>
   setValues: (next: Record<string, string>) => void
   run: (text: string) => Promise<void>
+  editTemplate: (values: Record<string, string>, fileName: string) => void
 }): JSX.Element {
   const { template, values, setValues } = props
+  const [fileName, setFileName] = useState(`${template.id}.yaml`)
   const set = (id: string, value: string): void => {
     setValues({ ...values, [id]: value })
   }
@@ -184,6 +279,10 @@ function ParameterForm(props: {
           onChange={(value) => { set(parameter.id, value) }}
         />
       ))}
+      <label className={styles.field}>
+        <span className={styles.label}>实例文件名</span>
+        <input type="text" value={fileName} onChange={(event) => { setFileName(event.target.value) }} />
+      </label>
       {missing.length > 0 ? <p className={styles.error}>缺少必填参数：{missing.join('、')}</p> : null}
       <div className={styles.actions}>
         <button
@@ -201,6 +300,14 @@ function ParameterForm(props: {
           onClick={() => { void props.run(`/workflow create ${template.id} ${paramFlags()} --save`) }}
         >
           创建实例
+        </button>
+        <button
+          type="button"
+          className={styles.secondary}
+          disabled={missing.length > 0}
+          onClick={() => { props.editTemplate(values, fileName) }}
+        >
+          创建并编排
         </button>
       </div>
     </div>
@@ -275,9 +382,10 @@ function ParameterField(props: {
 function WorkflowTab(props: {
   workspaces: AceStateDto['workspaces']
   run: (text: string) => Promise<void>
+  onEdit: (workspacePath: string, fileName: string) => void
 }): JSX.Element {
   const all = props.workspaces.flatMap((workspace) =>
-    workspace.workflows.map((workflow) => ({ ...workflow, workspaceTitle: workspace.title })),
+    workspace.workflows.map((workflow) => ({ ...workflow, workspacePath: workspace.path, workspaceTitle: workspace.title })),
   )
   if (all.length === 0) {
     return <p className={styles.empty}>暂无 workflow 实例，可从「模板」页创建</p>
@@ -297,6 +405,13 @@ function WorkflowTab(props: {
               onClick={() => { void props.run(`/workflow run ${workflow.fileName} --wait`) }}
             >
               运行
+            </button>
+            <button
+              type="button"
+              className={styles.secondary}
+              onClick={() => { props.onEdit(workflow.workspacePath, workflow.fileName) }}
+            >
+              编排
             </button>
           </div>
         </li>

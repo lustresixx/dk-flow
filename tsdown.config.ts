@@ -13,6 +13,7 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { basename, dirname, resolve as resolvePath, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { transform } from 'lightningcss'
@@ -87,8 +88,8 @@ const config: UserConfig = {
   }, {
     name: 'dsh-css-modules-inline',
     resolveId(source: string, importer: string | undefined) {
-      if (!source.endsWith('.module.css')) return null
-      const abs = importer !== undefined ? sourceAssetPath(source, importer) : source
+      if (!source.endsWith('.css')) return null
+      const abs = importer !== undefined ? resolveCssPath(source, importer) : source
       return CSS_VIRTUAL_PREFIX + abs + CSS_VIRTUAL_SUFFIX
     },
     async load(virtualId: string) {
@@ -96,19 +97,14 @@ const config: UserConfig = {
       const fileId = virtualId.slice(CSS_VIRTUAL_PREFIX.length, -CSS_VIRTUAL_SUFFIX.length)
       this.addWatchFile(fileId)
       const source = readFileSync(fileId)
+      const isModule = fileId.endsWith('.module.css')
       const { code, exports: cssExports } = transform({
         filename: fileId,
         code: source,
-        cssModules: { pattern: '[hash]_[local]' },
+        cssModules: isModule ? { pattern: '[hash]_[local]' } : undefined,
         minify: true,
       })
-      // Sorted so the emitted map is byte-stable: lightningcss does not promise
-      // an export order, and an unstable one rewrites lib/client.js on every
-      // build, producing diff noise.
-      const classMap: Record<string, string> = {}
-      const sorted = Object.entries(cssExports ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-      for (const [local, exp] of sorted) classMap[local] = exp.name
-      return [
+      const styleInjection = [
         `const css = ${JSON.stringify(code.toString())};`,
         `const tagId = ${JSON.stringify(`${PLUGIN_ID}/${basename(fileId)}`)};`,
         'if (typeof document !== \'undefined\' && document.querySelector(\'style[data-plugin-css=\' + JSON.stringify(tagId) + \']\') === null) {',
@@ -118,8 +114,17 @@ const config: UserConfig = {
         '  tag.textContent = css;',
         '  document.head.appendChild(tag);',
         '}',
-        `export default ${JSON.stringify(classMap)};`,
       ].join('\n')
+      if (!isModule) {
+        return [`${styleInjection}`, 'export default {};'].join('\n')
+      }
+      // Sorted so the emitted map is byte-stable: lightningcss does not promise
+      // an export order, and an unstable one rewrites lib/client.js on every
+      // build, producing diff noise.
+      const classMap: Record<string, string> = {}
+      const sorted = Object.entries(cssExports ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      for (const [local, exp] of sorted) classMap[local] = exp.name
+      return [`${styleInjection}`, `export default ${JSON.stringify(classMap)};`].join('\n')
     },
   }],
   outputOptions: {
@@ -142,6 +147,17 @@ function sourceAssetPath(source: string, importer: string): string {
     if (existsSync(srcPath)) return srcPath
   }
   return source
+}
+
+/** Resolve a css specifier: relative paths against the importer, bare package
+ *  specifiers (e.g. `@xyflow/react/dist/style.css`) through node resolution. */
+function resolveCssPath(source: string, importer: string): string {
+  if (source.startsWith('.')) return sourceAssetPath(source, importer)
+  try {
+    return createRequire(importer).resolve(source)
+  } catch {
+    return source
+  }
 }
 
 export default config

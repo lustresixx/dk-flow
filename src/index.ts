@@ -14,6 +14,27 @@ import { registerCommands } from './commands.js'
 import AceHarnessService, { type AceHarnessConfig } from './service.js'
 import { registerTools } from './tools.js'
 
+/** Read a request body up to a byte cap. */
+function readRequestBody(req: IncomingMessage, maxBytes: number): Promise<string> {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const chunks: Buffer[] = []
+    let size = 0
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length
+      if (size > maxBytes) {
+        rejectPromise(new Error(`请求体超过 ${maxBytes} 字节上限`))
+        req.destroy()
+        return
+      }
+      chunks.push(chunk)
+    })
+    req.on('end', () => {
+      resolvePromise(Buffer.concat(chunks).toString('utf8'))
+    })
+    req.on('error', rejectPromise)
+  })
+}
+
 export const name = 'ace-harness'
 
 /** Host services this plugin waits for before activation. */
@@ -193,6 +214,93 @@ export function apply(ctx: Context, config: Config): void {
         }
       },
     }), 'ace-harness: state route')
+
+    // Raw workflow read/write + template instantiation routes for the visual
+    // editor. Workspace paths are validated against the workspace registry;
+    // file names are restricted to a safe pattern.
+    ctx.effect(() => webServer.register({
+      kind: 'prefix',
+      path: '/plugins/dsh-ace-harness/workflows',
+      handler: async (req, res) => {
+        const url = new URL(req.url ?? '/', 'http://x')
+        const relative = decodeURIComponent(url.pathname.slice('/plugins/dsh-ace-harness/workflows'.length)).replace(/^\/+/, '')
+        try {
+          const workspacePath = url.searchParams.get('workspace')
+          const known = workspaceRegistry.list().map((workspace) => workspace.path)
+          if (!workspacePath || !known.includes(workspacePath)) {
+            res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end('workspace 不在已知工作区列表中')
+            return
+          }
+          if (req.method === 'GET' && relative !== '') {
+            if (!/^[A-Za-z0-9_-]+\.yaml$/.test(relative)) {
+              res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+              res.end('workflow 文件名非法')
+              return
+            }
+            const loaded = await aceHarness.loadWorkflowConfig(workspacePath, relative)
+            if (!loaded) {
+              res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+              res.end(`未找到 workflow「${relative}」`)
+              return
+            }
+            const { readFile } = await import('node:fs/promises')
+            const yaml = await readFile(loaded.file, 'utf8')
+            res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' })
+            res.end(yaml)
+            return
+          }
+          if (req.method === 'POST' && relative !== '') {
+            if (!/^[A-Za-z0-9_-]+\.yaml$/.test(relative)) {
+              res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+              res.end('workflow 文件名非法')
+              return
+            }
+            const body = await readRequestBody(req, 1_000_000)
+            const saved = await aceHarness.saveWorkflowConfig(workspacePath, relative, body)
+            res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+            res.end(JSON.stringify({ ok: true, file: saved }))
+            return
+          }
+          res.writeHead(405, { 'content-type': 'text/plain; charset=utf-8' })
+          res.end('method not allowed')
+        } catch (error) {
+          ctx.logger('ace-harness').warn(`workflows route failed: ${String(error)}`)
+          res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+          res.end(String(error))
+        }
+      },
+    }), 'ace-harness: workflows route')
+
+    ctx.effect(() => webServer.register({
+      kind: 'exact',
+      path: '/plugins/dsh-ace-harness/instantiate',
+      handler: async (req, res) => {
+        try {
+          if (req.method !== 'POST') {
+            res.writeHead(405, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end('method not allowed')
+            return
+          }
+          const body = JSON.parse(await readRequestBody(req, 1_000_000)) as {
+            templateId?: string
+            values?: Record<string, string>
+          }
+          const templateId = body.templateId
+          if (!templateId) {
+            res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end('缺少 templateId')
+            return
+          }
+          const instantiated = await aceHarness.instantiate(templateId, undefined, body.values ?? {}, {})
+          res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' })
+          res.end(instantiated.yamlText)
+        } catch (error) {
+          res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+          res.end(String(error))
+        }
+      },
+    }), 'ace-harness: instantiate route')
   }
 
   registerWebSurface()

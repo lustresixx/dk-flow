@@ -7,6 +7,7 @@
 - 内置 11 个精选 Agent（supervisor / 防守 / 攻击 / 裁决四队）与 3 个 workflow 模板（通用红蓝评审、缺陷定位修复、软件交付）
 - `/workflow` 斜杠命令 + `workflow_list` / `run_workflow` / `workflow_manage` 三个模型工具
 - Web GUI 浮动面板：模板浏览 → 填参 → 运行 → 进度看板
+- **可视化编排编辑器**（React Flow）：拖拽状态节点与 verdict 转移边、编辑步骤/角色/任务、从模板实例化后继续编排、保存即校验
 - 治理：运行目录持久化（state.json + audit.jsonl）、恢复、人工决策点、Git baseline 快照
 
 ## 安装
@@ -56,6 +57,13 @@ dsh --profile web --dump-config
 - `workflow_manage` — runs / show / resume / stop / create
 
 Web GUI 右下角有「ACE 工作流」浮动面板：浏览模板、填参数、一键运行、查看进度与各状态 verdict。
+
+可视化编排：
+
+1. 「模板」页展开模板 → 「创建并编排」：填参数与实例文件名，进入编辑器
+2. 「工作流」页对已有实例点「编排」：加载 YAML 到编辑器
+3. 编辑器内：拖动节点布局、从节点右缘拖到另一节点创建转移边、点节点编辑状态/步骤/角色/任务/并行组、点边编辑 verdict 条件与优先级
+4. 「保存」经宿主路由校验后写入 `<workspace>/.dsh/workflows/`
 
 ## 工作流 DSL
 
@@ -142,7 +150,7 @@ curl http://127.0.0.1:3091/plugins/dsh-ace-harness/state
 - 步骤执行依赖 DSH 的 `spawn`/`fork` 子代理与可用的 LLM 凭据；未配置凭据时运行会以清晰错误失败并持久化 failed 状态
 - 运行在发起命令/工具的进程中前台推进；后台 job 化与跨进程恢复尚未实现（中断后可用 `/workflow resume` 在同一工作区继续）
 - `allowedTools` 目录字段暂为元数据，未映射成 DSH 工具过滤器
-- 可视化编排编辑器（React Flow）尚未移植；编排以 YAML 为主，模板面板覆盖"选择并运行"路径
+- 编辑器暂不覆盖的高级 DSL 字段：`issueTypes`/`severities`/`minIssueCount` 条件、`reviewPolicy`、自定义 `custom` 条件——这些保留在 YAML 里，可在编辑器的步骤/转移检查器中改动常用字段，高级字段直接改 YAML
 
 ## 许可证与署名
 
