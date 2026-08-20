@@ -52,6 +52,12 @@ export interface WorkflowSupervisorConfig {
   checkpointAdviceEnabled?: boolean
   scoringEnabled?: boolean
   experienceEnabled?: boolean
+  /**
+   * `risks` (default): checkpoint advice only when a state fails, is marked,
+   * or asks for human approval — success-forward states skip the extra call.
+   * `all`: keep the legacy per-state checkpoint.
+   */
+  checkpointPolicy?: 'risks' | 'all'
 }
 
 export interface ReviewPolicy {
@@ -173,6 +179,8 @@ export interface StateMachineState {
   isFinal: boolean
   /** Self-transition fuse: exceeding it ends the run with an error. */
   maxSelfTransitions?: number
+  /** Force a supervisor checkpoint even on success-forward transitions. */
+  supervisorCheckpoint?: boolean
   reviewPolicy?: ReviewPolicy
   executionMode?: 'sequential' | 'parallel'
   joinPolicy?: JoinPolicy

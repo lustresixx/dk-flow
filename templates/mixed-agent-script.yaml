@@ -1,0 +1,134 @@
+workflow:
+  name: 混合流水线（脚本⇄AI）
+  description: 脚本准备 → AI 分析 → 脚本转换 → AI 评审 → 脚本汇总，两种节点交替接力
+  mode: state-machine
+  maxTransitions: 20
+  supervisor:
+    enabled: true
+    agent: default-supervisor
+    stageReviewEnabled: true
+    checkpointAdviceEnabled: true
+    scoringEnabled: true
+    experienceEnabled: true
+    checkpointPolicy: risks
+  states:
+    - name: 数据准备
+      description: 脚本节点：校验输入并整理成分析材料
+      isInitial: true
+      isFinal: false
+      maxSelfTransitions: 2
+      position: { x: 40, y: 200 }
+      steps:
+        - name: 输入准备
+          type: script
+          script: |
+            if (!context.requirements || context.requirements.trim() === '') {
+              return { output: '输入为空，无法分析', success: false }
+            }
+            return {
+              output: '分析材料已就绪：\n主题：' + context.requirements.trim() + '\n要求：给出要点、风险与建议的结构化分析。',
+              success: true,
+            }
+      transitions:
+        - { to: AI分析, condition: { verdict: success }, priority: 10, label: 成功 }
+        - { to: 失败, condition: { verdict: fail }, priority: 20, label: 失败 }
+    - name: AI分析
+      description: Agent 节点：architect 基于脚本产出做深入分析
+      isInitial: false
+      isFinal: false
+      maxSelfTransitions: 2
+      supervisorCheckpoint: true
+      position: { x: 300, y: 200 }
+      steps:
+        - name: 主题分析
+          agent: architect
+          role: defender
+          task: |
+            基于「数据准备」节点提供的分析材料（只读，不要重复准备数据）：
+            - 分解主题为关键要点，逐点给出依据
+            - 识别风险与边界条件，按影响排序
+            - 给出可执行建议与验证方式
+            完成后给出结构化分析结论与结论标签。
+      transitions:
+        - { to: 结果转换, condition: { verdict: success }, priority: 10, label: 成功 }
+        - { to: AI分析, condition: { verdict: fail }, priority: 20, label: 重试分析 }
+    - name: 结果转换
+      description: 脚本节点：把 AI 分析结果压缩成结构化摘要
+      isInitial: false
+      isFinal: false
+      maxSelfTransitions: 2
+      position: { x: 560, y: 200 }
+      steps:
+        - name: 摘要转换
+          type: script
+          script: |
+            const evidence = context.priorStateEvidence || ''
+            const compact = evidence.replace(/\s+/g, ' ').trim()
+            return {
+              output: '分析摘要（前 300 字符）：' + compact.slice(0, 300) + '…\n原文长度：' + evidence.length + ' 字符',
+              success: true,
+            }
+      transitions:
+        - { to: AI评审, condition: { verdict: success }, priority: 10, label: 成功 }
+        - { to: 失败, condition: { verdict: fail }, priority: 20, label: 失败 }
+    - name: AI评审
+      description: Agent 节点：code-judge 对照输入与摘要评审分析质量
+      isInitial: false
+      isFinal: false
+      maxSelfTransitions: 2
+      position: { x: 820, y: 200 }
+      steps:
+        - name: 分析评审
+          agent: code-judge
+          role: judge
+          task: |
+            对照「数据准备」的原始输入与「结果转换」的摘要（只读，不重做分析）：
+            - 检查分析是否覆盖主题要点、风险是否识别充分、建议是否可执行
+            - 输出 verdict：success（分析合格，可交付）或 fail（存在关键缺口，说明缺什么）
+            完成后给出评审结论与 verdict 标签。
+      transitions:
+        - { to: 汇总输出, condition: { verdict: success }, priority: 10, label: 评审通过 }
+        - { to: AI分析, condition: { verdict: fail }, priority: 20, label: 重新分析 }
+    - name: 汇总输出
+      description: 脚本节点：汇总全流程产出作为最终交付
+      isInitial: false
+      isFinal: true
+      position: { x: 1080, y: 200 }
+      steps:
+        - name: 最终汇总
+          type: script
+          script: |
+            const summary = [
+              '=== 混合流水线交付 ===',
+              '主题：' + (context.requirements || ''),
+              '',
+              '分析结论：',
+              context.priorStateEvidence || '',
+            ].join('\n')
+            return { output: summary, success: true }
+      transitions: []
+    - name: 失败
+      description: 失败终态：脚本节点记录失败原因
+      isInitial: false
+      isFinal: true
+      position: { x: 560, y: 440 }
+      steps:
+        - name: 记录失败
+          type: script
+          script: |
+            return {
+              output: '流水线失败。最后一步产出：\n' + (context.priorStepEvidence || '（无）'),
+              success: true,
+            }
+      transitions: []
+context:
+  projectRoot: ""
+  workspaceMode: in-place
+  requirements: ""
+  taskInput:
+    fields:
+      - id: requirements
+        label: 分析主题
+        type: textarea
+        required: true
+        placeholder: "例如：分析插件工作流引擎还有哪些性能优化空间"

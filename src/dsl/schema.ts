@@ -34,6 +34,7 @@ export const workflowSupervisorConfigSchema = z.object({
   checkpointAdviceEnabled: z.boolean().default(true),
   scoringEnabled: z.boolean().default(true),
   experienceEnabled: z.boolean().default(true),
+  checkpointPolicy: z.enum(['risks', 'all']).default('risks'),
 }).optional()
 
 export const reviewPolicySchema = z.object({
@@ -179,6 +180,7 @@ export const stateMachineStateSchema = z.object({
   isInitial: z.boolean().default(false),
   isFinal: z.boolean().default(false),
   maxSelfTransitions: z.number().min(1).max(100).optional(),
+  supervisorCheckpoint: z.boolean().optional(),
   reviewPolicy: reviewPolicySchema.optional(),
   executionMode: z.enum(['sequential', 'parallel']).optional(),
   joinPolicy: joinPolicySchema.optional(),

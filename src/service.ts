@@ -884,7 +884,7 @@ export default class AceHarnessService extends Service {
               }
             }, 800)
           }
-          const childResult = await run.result
+          const childResult = await raceAbort(run.result, input.signal)
           if (stepSignal.timedOut()) {
             throw new Error(`步骤「${input.stepName}」执行超时（${service.config.stepTimeoutMs}ms）`)
           }
@@ -981,7 +981,7 @@ export default class AceHarnessService extends Service {
             agentOptions: service.config.model ? { model: service.config.model } : undefined,
             outputSchema: wantsSchema ? SCORE_OUTPUT_SCHEMA : undefined,
           })
-          const childResult = await run.result
+          const childResult = await raceAbort(run.result, input.signal)
           if (stepSignal.timedOut()) {
             throw new Error(`supervisor 检查点执行超时（${service.config.stepTimeoutMs}ms）`)
           }
@@ -1032,6 +1032,28 @@ function randomSuffix(): string {
 /** Structural face of the jobs registry (resolved lazily through the store). */
 interface JobRegistryFace {
   start(spec: JobStart): JobId
+}
+
+/**
+ * Race a pending promise against an abort signal: rejection wins the moment
+ * the signal fires, so a stop never waits on a hung child to settle.
+ */
+function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(new Error('运行被取消'))
+  return new Promise<T>((resolvePromise, rejectPromise) => {
+    const onAbort = (): void => rejectPromise(new Error('运行被取消'))
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort)
+        resolvePromise(value)
+      },
+      (error) => {
+        signal.removeEventListener('abort', onAbort)
+        rejectPromise(error)
+      },
+    )
+  })
 }
 
 /**

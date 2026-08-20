@@ -30,7 +30,7 @@ describe('built-in catalog', () => {
     }
   })
 
-  it('ships the five built-in workflow templates, all reference-consistent', async () => {
+  it('ships the six built-in workflow templates, all reference-consistent', async () => {
     const templates = await loadBuiltinTemplates()
     expect(templates.map((t) => t.id)).toEqual(
       expect.arrayContaining([
@@ -39,6 +39,7 @@ describe('built-in catalog', () => {
         'software-delivery',
         'simple-script-pipeline',
         'code-optimization-review',
+        'mixed-agent-script',
       ]),
     )
     const agents = await loadBuiltinAgents()
@@ -77,6 +78,19 @@ describe('built-in catalog', () => {
       'code-judge',
       'documentation-writer',
     ])
+    // The mixed template alternates script and agent steps, Dify-style.
+    const mixed = templates.find((t) => t.id === 'mixed-agent-script')!
+    const mixedSteps = mixed.config.workflow.states
+      .filter((s) => !s.isFinal || s.name === '汇总输出')
+      .flatMap((s) => s.steps)
+    expect(mixedSteps.map((s) => s.type ?? 'agent')).toEqual([
+      'script',
+      'agent',
+      'script',
+      'agent',
+      'script',
+    ])
+    expect(mixedSteps.map((s) => s.agent ?? null)).toEqual([null, 'architect', null, 'code-judge', null])
   })
 })
 

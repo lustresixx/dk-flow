@@ -1,0 +1,22 @@
+apiVersion: aceharness.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  id: mixed-agent-script
+  version: 1.0.0
+  name: 混合流水线（脚本⇄AI）
+  description: Dify 式混合编排：脚本准备 → AI 分析 → 脚本转换 → AI 评审 → 脚本汇总，脚本节点与 Agent 节点交替接力，展示两种节点的数据交接。
+  category: 示例
+  tags: [混合, 脚本, AI, 示例]
+  featured: true
+spec:
+  entrypoint: workflow.yaml
+  mode: state-machine
+  compatibility:
+    aceharness: ">=1.0.0-rc.8 <2.0.0"
+  parameters:
+    - { id: workflowName, label: 工作流名称, type: string, bind: /workflow/name, required: true, default: 混合流水线（脚本⇄AI） }
+    - { id: requirements, label: 分析主题, type: text, bind: /context/requirements, required: true }
+  dependencies:
+    agents: [default-supervisor, architect, code-judge]
+    skills: []
+    subworkflows: []

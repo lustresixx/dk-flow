@@ -394,7 +394,9 @@ describe('runStateMachine', () => {
   })
 
   it('records supervisor scores and notes on state outcomes', async () => {
-    const config = redBlueConfig()
+    const config = redBlueConfig({
+      supervisor: { enabled: true, agent: 'default-supervisor', checkpointPolicy: 'all' },
+    })
     const executor: StepExecutor = {
       async runAgentStep() {
         return { outputSummary: '', verdict: V('pass') }
@@ -500,6 +502,108 @@ describe('runStateMachine', () => {
     const failed = await runStateMachine(failOptions)
     expect(failed.status).toBe('completed')
     expect(failed.stateOutcomes.map((o) => o.state)).toEqual(['检查', '失败'])
+  })
+
+  it('skips supervisor checkpoints on success-forward states under the risks policy', async () => {
+    let checkpoints = 0
+    const executor: StepExecutor = {
+      async runAgentStep() {
+        return { outputSummary: '', verdict: V('pass') }
+      },
+      async runSubworkflowStep() {
+        return { outcome: 'completed', verdict: V('pass') }
+      },
+      async supervisorAdvice() {
+        checkpoints += 1
+        return { advice: '', score: null }
+      },
+    }
+    const options: EngineRunOptions = {
+      config: redBlueConfig(),
+      runId: 'run-checkpoints',
+      configFile: 'red-blue.yaml',
+      inputs: {},
+      parent: fakeParent,
+      signal: new AbortController().signal,
+      executor,
+      persist: async () => {},
+      load: async () => null,
+      resolveSubworkflow: async () => redBlueConfig(),
+      askHumanTransition: async ({ candidates }) => candidates[0] ?? '',
+    }
+    const result = await runStateMachine(options)
+    expect(result.status).toBe('completed')
+    expect(checkpoints).toBe(0)
+  })
+
+  it('runs supervisor checkpoints for failed states under the risks policy', async () => {
+    let executions = 0
+    let checkpoints = 0
+    const executor: StepExecutor = {
+      async runAgentStep(input) {
+        if (input.ctx.state === '执行') {
+          executions += 1
+          return { outputSummary: '', verdict: executions === 1 ? V('fail') : V('pass') }
+        }
+        return { outputSummary: '', verdict: V('pass') }
+      },
+      async runSubworkflowStep() {
+        return { outcome: 'completed', verdict: V('pass') }
+      },
+      async supervisorAdvice(input) {
+        if (input.ctx.state === '执行') checkpoints += 1
+        return { advice: '', score: null }
+      },
+    }
+    const options: EngineRunOptions = {
+      config: redBlueConfig(),
+      runId: 'run-checkpoint-fail',
+      configFile: 'red-blue.yaml',
+      inputs: {},
+      parent: fakeParent,
+      signal: new AbortController().signal,
+      executor,
+      persist: async () => {},
+      load: async () => null,
+      resolveSubworkflow: async () => redBlueConfig(),
+      askHumanTransition: async ({ candidates }) => candidates[0] ?? '',
+    }
+    const result = await runStateMachine(options)
+    expect(result.status).toBe('completed')
+    expect(checkpoints).toBe(1)
+  })
+
+  it('runs every supervisor checkpoint under the all policy', async () => {
+    let checkpoints = 0
+    const executor: StepExecutor = {
+      async runAgentStep() {
+        return { outputSummary: '', verdict: V('pass') }
+      },
+      async runSubworkflowStep() {
+        return { outcome: 'completed', verdict: V('pass') }
+      },
+      async supervisorAdvice() {
+        checkpoints += 1
+        return { advice: '', score: null }
+      },
+    }
+    const config = redBlueConfig({ supervisor: { enabled: true, agent: 'default-supervisor', checkpointPolicy: 'all' } })
+    const options: EngineRunOptions = {
+      config,
+      runId: 'run-checkpoint-all',
+      configFile: 'red-blue.yaml',
+      inputs: {},
+      parent: fakeParent,
+      signal: new AbortController().signal,
+      executor,
+      persist: async () => {},
+      load: async () => null,
+      resolveSubworkflow: async () => config,
+      askHumanTransition: async ({ candidates }) => candidates[0] ?? '',
+    }
+    const result = await runStateMachine(options)
+    expect(result.status).toBe('completed')
+    expect(checkpoints).toBe(3)
   })
 
   it('runs parallel segments concurrently', async () => {

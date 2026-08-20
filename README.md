@@ -6,7 +6,8 @@
 - **实时运行侧边栏**：工作流运行时自动在右侧弹出——状态机迷你流转图（完成状态按成功/失败着色、当前状态脉冲高亮）+ 当前步骤角色 + **子代理输出流式滚动**（`GET /plugins/dsh-ace-harness/stream` 实时投影）
 - 节点三种类型：**AI 步骤**（专属角色 Agent）、**脚本步骤**（node:vm 执行 JS）、**子工作流**
 - 流转只分**成功 / 失败**，由 AI 依据实际产出判断；保留旧 pass/conditional_pass YAML 兼容
-- 内置 13 个角色 Agent（supervisor / defender / attacker / judge 四队）+ 5 个模板（通用红蓝评审、缺陷定位修复、软件交付、简单脚本流水线、**代码优化评审**）
+- 内置 13 个角色 Agent（supervisor / defender / attacker / judge 四队）+ 6 个模板（通用红蓝评审、缺陷定位修复、软件交付、简单脚本流水线、**代码优化评审**、**混合流水线（脚本⇄AI）**）
+- **按风险自适应监督**：`supervisor.checkpointPolicy: risks`（默认）只在失败/标记/人工门状态跑检查点，成功直行跳过额外调用；`all` 恢复逐状态检查
 - `/workflow` 斜杠命令 + `workflow_list` / `run_workflow` / `workflow_manage` 模型工具
 - 治理：运行持久化、断点恢复、人工决策点、supervisor 评分与经验沉淀、Git baseline、后台 job
 - ACEHarness 官方 logo 装饰界面

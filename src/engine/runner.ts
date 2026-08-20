@@ -436,9 +436,24 @@ async function executeState(
     finishedAt: now(),
   }
 
-  // Optional supervisor checkpoint advice after the state settles.
+  // Supervisor checkpoint after the state settles. The `risks` policy (the
+  // default) skips the extra model call on success-forward transitions and
+  // keeps oversight exactly where risk concentrates: failed states, states
+  // marked `supervisorCheckpoint`, and human-approval gates.
   const supervisor = options.config.workflow.supervisor
-  if (supervisor && supervisor.enabled && !machineState.isFinal && options.executor.supervisorAdvice) {
+  const needsCheckpoint =
+    supervisor?.checkpointPolicy === 'all' ||
+    machineState.supervisorCheckpoint === true ||
+    machineState.requireHumanApproval === true ||
+    stateOutcome.verdict.verdict === 'fail' ||
+    stateOutcome.verdict.verdict === 'conditional_pass'
+  if (
+    supervisor &&
+    supervisor.enabled &&
+    !machineState.isFinal &&
+    needsCheckpoint &&
+    options.executor.supervisorAdvice
+  ) {
     const result = await options.executor.supervisorAdvice({
       supervisorName: supervisor.agent ?? 'default-supervisor',
       supervisorSystemPrompt: '',
