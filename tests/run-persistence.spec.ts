@@ -149,6 +149,9 @@ describe('RunPersistence.makePersist', () => {
     const registry = new RunRegistry()
     const persistence = makePersistence(registry, [])
     const persist = persistence.makePersist(workspace, 'run-1')
+    // The engine always persists once with zero outcomes when a run starts;
+    // that snapshot seeds the audit cursor (P1-2⑤).
+    await persist(makeRun('run-1', { stateOutcomes: [], completedSteps: 0 }))
     await persist(makeRun('run-1'))
     const auditText = await readFile(join(workspace, RUN_DIR_NAME, 'runs', 'run-1', 'audit.jsonl'), 'utf8')
     const events = auditText.trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>)
@@ -158,6 +161,47 @@ describe('RunPersistence.makePersist', () => {
     await persist(makeRun('run-1'))
     const again = await readFile(join(workspace, RUN_DIR_NAME, 'runs', 'run-1', 'audit.jsonl'), 'utf8')
     expect(again.trim().split('\n')).toHaveLength(1)
+  })
+
+  it('seeds the audit cursor without replaying history on a resumed run (P1-2⑤)', async () => {
+    const registry = new RunRegistry()
+    const persistence = makePersistence(registry, [])
+    const persist = persistence.makePersist(workspace, 'run-1')
+    // A resumed process' first snapshot carries states completed in the
+    // previous process: they must not be replayed into the audit log.
+    await persist(makeRun('run-1'))
+    const auditText = await readFile(join(workspace, RUN_DIR_NAME, 'runs', 'run-1', 'audit.jsonl'), 'utf8').catch(() => '')
+    expect(auditText.trim()).toBe('')
+    // A genuinely new state after the resume still diffs exactly once.
+    await persist(
+      makeRun('run-1', {
+        stateOutcomes: [
+          ...makeRun('run-1').stateOutcomes,
+          {
+            state: '状态二',
+            verdict: { verdict: 'success', issues: [], rationale: '通过' },
+            steps: [
+              {
+                key: '状态二/步骤B',
+                state: '状态二',
+                step: '步骤B',
+                type: 'script',
+                outputSummary: '产出B',
+                verdict: { verdict: 'success', issues: [], rationale: '产出B' },
+                startedAt: '2026-08-20T10:02:00.000Z',
+                finishedAt: '2026-08-20T10:03:00.000Z',
+              },
+            ],
+            finishedAt: '2026-08-20T10:03:00.000Z',
+          },
+        ],
+        completedSteps: 2,
+      }),
+    )
+    const after = await readFile(join(workspace, RUN_DIR_NAME, 'runs', 'run-1', 'audit.jsonl'), 'utf8')
+    const events = after.trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>)
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({ event: 'state-end', state: '状态二' })
   })
 
   it('projects the snapshot onto the live stream when one is registered', async () => {

@@ -31,7 +31,7 @@ import { captureGitSnapshot, saveGitSnapshot } from './store/git-baseline.js'
 import { loadRunState } from './store/run-store.js'
 import type { AceHarnessConfig } from './service.js'
 import { jobOutcomeFor, type JobOutcomeLike } from './step-executor-factory.js'
-import type { RunPersistence } from './run-persistence.js'
+import { projectRunStateToStream, type RunPersistence } from './run-persistence.js'
 import type { RunRegistry } from './run-registry.js'
 
 /**
@@ -126,12 +126,11 @@ export class RunLifecycle {
     }
     const workspace = this.deps.workspaceOf(input.parent)
     const runId = `run-${Date.now()}-${randomSuffix()}`
+    // One controller per run (P1-2②): the registry stop button and the job
+    // cancel hook abort it, and the engine consumes its signal directly.
+    // The calling turn's signal is NOT linked in — a turn abort detaches a
+    // foreground run into a background job instead (detachOnTurnAbort).
     const controller = new AbortController()
-    const linked = new AbortController()
-    const onStop = (): void => linked.abort()
-    // Only the run's own controller stops it; the calling turn's abort signal
-    // detaches foreground runs to a job instead (see below).
-    controller.signal.addEventListener('abort', onStop, { once: true })
     registry.register(runId, controller)
     this.deps.ensureSandboxDir(workspace, runId)
 
@@ -159,7 +158,7 @@ export class RunLifecycle {
       workflow: input.workflow,
       runId,
       executor,
-      signal: linked.signal,
+      signal: controller.signal,
       load: () => loadRunState(workspace, runId, config.runDirName),
       inputs: input.inputs ?? {},
     })
@@ -218,7 +217,15 @@ export class RunLifecycle {
       },
     )
     const handle: AceRunHandle = { runId, result }
-    const detach = (): void => {
+    // The turn-abort decision point, made explicit (P1-2②). A cancelled
+    // calling turn never silently kills a run:
+    //   1. already settled      → nothing to decide;
+    //   2. parked at a human decision point → abort the run (the durable
+    //      pendingHuman survives; resume re-asks the question);
+    //   3. otherwise            → detach into a background job that keeps
+    //      executing; when this profile has no jobs service the run cannot
+    //      outlive its turn, so it is aborted instead.
+    const decideOnTurnAbort = (): void => {
       if (settled) return
       if (this.deps.registry.streams.get(runId)?.status === 'waiting-human') {
         controller.abort()
@@ -234,8 +241,8 @@ export class RunLifecycle {
       }
     }
     // A turn signal may already be aborted by the time the run starts.
-    if (signal.aborted) detach()
-    else signal.addEventListener('abort', detach, { once: true })
+    if (signal.aborted) decideOnTurnAbort()
+    else signal.addEventListener('abort', decideOnTurnAbort, { once: true })
     return handle
   }
 
@@ -265,13 +272,24 @@ export class RunLifecycle {
     }
     const workflow = await this.deps.resolveWorkflowConfig(workspace, persisted.configFile)
     if (!workflow) throw new Error(`运行 ${input.runId} 引用的 workflow「${persisted.configFile}」不存在`)
+    // Single controller, same rule as startRun (P1-2②): the turn signal
+    // detaches instead of aborting.
     const controller = new AbortController()
-    const linked = new AbortController()
-    const onStop = (): void => linked.abort()
-    // The run's own controller stops it; the turn signal detaches instead.
-    controller.signal.addEventListener('abort', onStop, { once: true })
     this.deps.ensureSandboxDir(workspace, input.runId)
     registry.register(input.runId, controller)
+    // Rebuild the live stream projection from the persisted truth (P1-2⑤):
+    // a resumed run must be observable like a fresh one (/stream 200 with
+    // topology, verdicts, and the step log backfilled). The projection is
+    // idempotent; later persists refine the entry in place.
+    projectRunStateToStream(
+      registry.openStream({
+        runId: input.runId,
+        workflowName: persisted.workflowName,
+        config: workflow.config,
+        totalSteps: persisted.totalSteps,
+      }),
+      persisted,
+    )
     const executor = this.deps.makeExecutor(workspace, input.parent, input.runId, 1)
     const options = this.engineOptions({
       workspace,
@@ -279,7 +297,7 @@ export class RunLifecycle {
       workflow: { config: workflow.config, configFile: workflow.file },
       runId: input.runId,
       executor,
-      signal: linked.signal,
+      signal: controller.signal,
       load: () => loadRunState(workspace, input.runId, config.runDirName),
       inputs: {},
     })

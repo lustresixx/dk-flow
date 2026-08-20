@@ -137,6 +137,18 @@ function toText(blocks: ContentBlock[]): string {
     .trim()
 }
 
+/**
+ * Append a streamed chunk under the incremental display cap (P1-2④). Live
+ * buffers keep the HEAD of the text — the same side the final truncate()
+ * keeps — so a long step no longer grows the stream entry and its stepLog
+ * line unboundedly between polls. Intermediate streamed text can be cut
+ * short; the finalized text is unchanged.
+ */
+function appendCapped(text: string, chunk: string, budget: number): string {
+  if (text.length >= budget) return text
+  return text + chunk.slice(0, budget - text.length)
+}
+
 function sanitize(name: string): string {
   return name.replace(/[^A-Za-z0-9_-]/g, '_')
 }
@@ -262,9 +274,9 @@ export function makeStepExecutor(
               )
               entry.foldIndex = fold.index
               if (fold.text !== '') {
-                entry.text += fold.text
+                entry.text = appendCapped(entry.text, fold.text, SUMMARY_BUDGET)
                 const logEntry = entry.stepLog[entry.stepLogIndex]
-                if (logEntry) logEntry.text += fold.text
+                if (logEntry) logEntry.text = appendCapped(logEntry.text, fold.text, SUMMARY_BUDGET)
                 entry.seq += 1
               }
             } catch (error) {
@@ -405,9 +417,9 @@ export function makeStepExecutor(
               text += chunk.text
               const entry = registry.streams.get(parentRunId)
               if (entry) {
-                entry.text += chunk.text
+                entry.text = appendCapped(entry.text, chunk.text, SUMMARY_BUDGET)
                 const logEntry = entry.stepLog[entry.stepLogIndex]
-                if (logEntry) logEntry.text += chunk.text
+                if (logEntry) logEntry.text = appendCapped(logEntry.text, chunk.text, SUMMARY_BUDGET)
                 entry.seq += 1
               }
             } else if (chunk.type === 'finish' && chunk.reason.kind === 'error') {
@@ -458,18 +470,35 @@ export function makeStepExecutor(
       const resolved = await host.resolveWorkflowConfig(workspace, input.configFile)
       if (!resolved) throw new EngineError(`子工作流「${input.configFile}」不存在`, 'NO_MATCH')
       const childRunId = `${parentRunId}.${sanitize(input.stepName)}`
-      const childExecutor = makeStepExecutor(host, workspace, input.parent, childRunId, depth + 1)
-      const childOptions = host.engineOptions({
-        workspace,
-        parent: input.parent,
-        workflow: { config: resolved.config, configFile: resolved.file },
+      // Observability (P1-2⑤): the child run gets its own live stream entry
+      // — its executor and persist projection already key on childRunId, so
+      // the entry fills step by step; without it the panel went silent for
+      // the whole subworkflow. Settled (and prune-scheduled) when it ends.
+      registry.openStream({
         runId: childRunId,
-        executor: childExecutor,
-        signal: input.signal,
-        load: () => loadRunState(workspace, childRunId, config.runDirName),
-        inputs: { requirements: input.inheritedRequirements },
+        workflowName: resolved.config.workflow.name,
+        config: resolved.config,
+        totalSteps: resolved.config.workflow.states.reduce((sum, state) => sum + state.steps.length, 0),
       })
-      const childResult = await runStateMachine(childOptions)
+      let childResult: RunResult
+      try {
+        const childExecutor = makeStepExecutor(host, workspace, input.parent, childRunId, depth + 1)
+        const childOptions = host.engineOptions({
+          workspace,
+          parent: input.parent,
+          workflow: { config: resolved.config, configFile: resolved.file },
+          runId: childRunId,
+          executor: childExecutor,
+          signal: input.signal,
+          load: () => loadRunState(workspace, childRunId, config.runDirName),
+          inputs: { requirements: input.inheritedRequirements },
+        })
+        childResult = await runStateMachine(childOptions)
+      } catch (error) {
+        registry.settleStream(childRunId, 'crashed')
+        throw error
+      }
+      registry.settleStream(childRunId, childResult.status)
       const outcome =
         childResult.status === 'completed'
           ? 'completed'

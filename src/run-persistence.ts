@@ -9,7 +9,7 @@
  */
 import { truncate } from './engine/prompts.js'
 import type { RunState } from './engine/types.js'
-import { EMPTY_PROGRESS_TRACK, progressAuditEvents } from './store/audit-events.js'
+import { progressAuditEvents } from './store/audit-events.js'
 import { appendAudit, saveRunState } from './store/run-store.js'
 import type { SqliteArchive } from './store/sqlite-archive.js'
 import type { RunRegistry, RunStreamState } from './run-registry.js'
@@ -151,8 +151,16 @@ export class RunPersistence {
     }
     // Evidence chain: diff the snapshot into granular audit events
     // (state-end / waiting-human / human-resolved) so the audit timeline
-    // tells the full story, not just start/resume/end.
-    const tracked = this.deps.registry.progressTrack.get(runId) ?? EMPTY_PROGRESS_TRACK
+    // tells the full story, not just start/resume/end. A run resumed into
+    // this process has no cursor yet: seed it from the snapshot WITHOUT
+    // emitting, so states completed before the resume are not replayed
+    // into the log (idempotent resume rebuild, P1-2⑤). A fresh run's first
+    // snapshot seeds the empty cursor and diffs exactly like before.
+    let tracked = this.deps.registry.progressTrack.get(runId)
+    if (tracked === undefined) {
+      tracked = { states: runState.stateOutcomes.length, waiting: runState.status === 'waiting-human' }
+      this.deps.registry.progressTrack.set(runId, tracked)
+    }
     const derived = progressAuditEvents(tracked, runState)
     this.deps.registry.progressTrack.set(runId, derived.next)
     for (const event of derived.events) {
