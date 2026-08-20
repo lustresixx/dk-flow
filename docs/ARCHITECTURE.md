@@ -7,18 +7,26 @@
 ```
 src/
   index.ts              插件入口：函数插件（name/inject/Config/apply），挂载服务、命令、工具、systemPrompt 段与 Web 路由
-  service.ts            AceHarnessService：目录、模板实例化、运行生命周期、jobs 接入、StepExecutor（ctx.subagents 实现）
+  service.ts            AceHarnessService：装配点与公开面（目录、模板实例化、验证、归档查询），委托四个协作者
+  run-registry.ts       运行登记簿：active/streams/progressTrack 三张 Map 的唯一所有者 + 流修剪策略
+  run-persistence.ts    持久化流水线：state.json → SQLite 镜像 → 审计 diff → 流投影 → ace/run-updated（persist 串行化）
+  run-lifecycle.ts      运行生命周期：startRun/resumeRun/stopRun、detach 决策、EngineRunOptions 装配
+  step-executor-factory.ts  StepExecutor 工厂：agent/llm/subworkflow/supervisor 四种实现（ctx.subagents 实现）
+  projections.ts        RunState → DTO 投影（HTTP 路由 / 工具 / 命令共用）
+  run-target.ts         运行目标解析：实例→模板 latestTemplate、缺参询问编排（commands/tools 共用）
+  resources.ts          打包资源根（双布局探测；catalog/engine/store 共用的最底层模块）
   commands.ts           /workflow 斜杠命令族
   tools.ts              workflow_list / run_workflow / workflow_manage 模型工具（defineTool）
   dsl/                  ACE 兼容 DSL：类型、Zod schema、YAML 加载校验、JSON Pointer、verdict 提取
   engine/               状态机运行器（纯 TS，宿主无关）：
-                          runner.ts（主循环/恢复/人工决策）、transitions.ts（条件/转移/聚合/熔断）、
-                          prompts.ts（角色提示与上下文预算）、pre-commands.ts（预命令）
+                          runner.ts（主循环/恢复/人工决策）、state-steps.ts（单状态步骤序列执行，runner 与
+                          独立验证共用）、transitions.ts（条件/转移/聚合/熔断）、prompts.ts（角色提示与
+                          上下文预算）、pre-commands.ts（预命令）
   templates/            模板实例化（manifest 参数绑定 + agent 替换）
-  store/                文件持久化：run-store / workflow-store / experience / git-baseline / paths
-  catalog/              内置资源（agents + workflow 模板，双布局路径解析）
-  client/               Web 面板与可视化编辑器（dsh.client，tsdown 打包）
-resources/              内置 11 个 agent YAML + 3 个 workflow 模板包
+  store/                文件持久化：run-store / workflow-store / experience / git-baseline / paths / sqlite-archive
+  catalog/              内置资源（agents + workflow 模板，版本语义排序）
+  client/               Web 面板与可视化编辑器（dsh.client，tsdown 打包；run-meta.ts 为共享词汇/路由模块）
+resources/              内置 agent YAML + workflow 模板包（每模板一版本目录）
 ```
 
 ## 关键设计

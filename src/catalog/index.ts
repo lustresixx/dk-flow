@@ -4,26 +4,16 @@
  * package `files` list) and are resolved relative to this module.
  * @module dsh-ace-harness/catalog
  */
-import { existsSync } from 'node:fs'
 import { readdir, readFile } from 'node:fs/promises'
-import { fileURLToPath } from 'node:url'
 import { parse } from 'yaml'
 import { parseTemplateManifest, parseWorkflowYaml } from '../dsl/load.js'
 import { agentDefinitionSchema } from '../dsl/schema.js'
 import type { AgentDefinition, WorkflowConfig, WorkflowTemplateManifest } from '../dsl/types.js'
+import { resourcesRoot } from '../resources.js'
 
-/**
- * Absolute path to the packaged resources directory. Compiled output mirrors
- * `src/` under `lib/` at the same depth, so the offset differs between the
- * two layouts; probe the lib layout first, then the source layout.
- */
-export function resourcesRoot(): URL {
-  const candidates = [new URL('../resources/', import.meta.url), new URL('../../resources/', import.meta.url)]
-  for (const candidate of candidates) {
-    if (existsSync(fileURLToPath(new URL('agents/', candidate)))) return candidate
-  }
-  return candidates[0]!
-}
+// The resource root lives in the low-level `resources.ts` (P2-2); re-export
+// keeps this module's historical import path working.
+export { resourcesRoot } from '../resources.js'
 
 /** A built-in workflow template: manifest plus its validated workflow config. */
 export interface BuiltinWorkflowTemplate {

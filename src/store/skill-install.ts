@@ -8,7 +8,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { resourcesRoot } from '../catalog/index.js'
+import { resourcesRoot } from '../resources.js'
 
 /** DSH home directory: `$DSH_HOME` when set, otherwise `~/.dsh`. */
 export function dshHome(): string {
