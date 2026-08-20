@@ -28,6 +28,7 @@ workflow:
             输出：问题清单（按严重度排序）+ 每个问题的优化假设 + 判断"哪些改动可能破坏现有功能"。
       transitions:
         - { to: 调研对标, condition: { verdict: success }, priority: 10, label: 成功 }
+        - { to: 调研对标, condition: { verdict: conditional_pass }, priority: 15, label: 附条件继续 }
         - { to: 架构诊断, condition: { verdict: fail }, priority: 20, label: 重做 }
     - name: 调研对标
       description: 检索架构最佳实践与参考案例，标注证据强度
@@ -45,6 +46,7 @@ workflow:
             输出：可复用的架构模式清单 + 证据链接 + 不适用场景说明。
       transitions:
         - { to: 对抗挑战, condition: { verdict: success }, priority: 10, label: 成功 }
+        - { to: 对抗挑战, condition: { verdict: conditional_pass }, priority: 15, label: 附条件继续 }
         - { to: 调研对标, condition: { verdict: fail }, priority: 20, label: 补充 }
     - name: 对抗挑战
       description: 攻击诊断与改造方向，找出风险与反例
@@ -62,6 +64,7 @@ workflow:
             每条质疑给出可验证的场景或依据。输出风险清单，按破坏性排序。
       transitions:
         - { to: 方案定稿, condition: { verdict: success }, priority: 10, label: 成功 }
+        - { to: 方案定稿, condition: { verdict: conditional_pass }, priority: 15, label: 附条件定稿 }
         - { to: 架构诊断, condition: { verdict: fail }, priority: 20, label: 回到诊断 }
     - name: 方案定稿
       description: 综合三方产出敲定改造方案，需人工批准（审批门 1）
@@ -81,6 +84,7 @@ workflow:
             方案不可行的部分直接否决并说明原因。
       transitions:
         - { to: 行为基线, condition: { verdict: success }, priority: 10, label: 批准后基线 }
+        - { to: 行为基线, condition: { verdict: conditional_pass }, priority: 15, label: 附条件放行 }
         - { to: 架构诊断, condition: { verdict: fail }, priority: 20, label: 回到诊断 }
     - name: 行为基线
       description: 改造前记录测试与性能基线，作为"不破坏功能"的锚点
@@ -97,6 +101,7 @@ workflow:
             这是后续"不破坏功能"的对照锚点，必须如实记录，基线本身有问题也要报告。
       transitions:
         - { to: 实施改造, condition: { verdict: success }, priority: 10, label: 开始实施 }
+        - { to: 实施改造, condition: { verdict: conditional_pass }, priority: 15, label: 附条件开工 }
         - { to: 方案定稿, condition: { verdict: fail }, priority: 20, label: 回到方案 }
     - name: 实施改造
       description: 按批准方案实施，逐项记录变更与理由
@@ -114,6 +119,7 @@ workflow:
             不动方案之外的部分；发现方案与代码实际不符时停下并说明。
       transitions:
         - { to: 回归验证, condition: { verdict: success }, priority: 10, label: 成功 }
+        - { to: 回归验证, condition: { verdict: conditional_pass }, priority: 15, label: 附条件回归 }
         - { to: 实施改造, condition: { verdict: fail }, priority: 20, label: 重做 }
     - name: 回归验证
       description: 与基线对比验证功能等价性
@@ -130,6 +136,7 @@ workflow:
             任何回归都要给出失败证据，不得放过。
       transitions:
         - { to: 对抗审查, condition: { verdict: success }, priority: 10, label: 通过 }
+        - { to: 对抗审查, condition: { verdict: conditional_pass }, priority: 15, label: 附条件送审 }
         - { to: 实施改造, condition: { verdict: fail }, priority: 20, label: 回修 }
     - name: 对抗审查
       description: 攻击已完成的改动集，找回归与新的架构反例
@@ -146,6 +153,7 @@ workflow:
             每条问题给出可验证的复现场景或代码位置。
       transitions:
         - { to: 终审, condition: { verdict: success }, priority: 10, label: 通过 }
+        - { to: 终审, condition: { verdict: conditional_pass }, priority: 15, label: 附条件终审 }
         - { to: 实施改造, condition: { verdict: fail }, priority: 20, label: 回修 }
     - name: 终审
       description: 对照方案与证据终审，需人工批准（审批门 2）
@@ -165,6 +173,7 @@ workflow:
             fail = 证据不足或仍有回归风险，回到实施改造。
       transitions:
         - { to: 交付汇总, condition: { verdict: success }, priority: 10, label: 批准交付 }
+        - { to: 交付汇总, condition: { verdict: conditional_pass }, priority: 15, label: 附条件交付 }
         - { to: 实施改造, condition: { verdict: fail }, priority: 20, label: 回修 }
     - name: 交付汇总
       description: 汇总改造清单、验证证据与残余风险

@@ -9,7 +9,7 @@ import { mkdirSync } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
 import { isAbsolute, join, resolve } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
-import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentRegistry } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import { assertObjectJsonSchema, type ObjectJsonSchema, type ToolRestriction } from '@deepseek-ai/dsh-tools'
 import type { SubagentStartRequest } from '@deepseek-ai/dsh-subagent'
@@ -1085,15 +1085,19 @@ export default class AceHarnessService extends Service {
   }
 
   /**
-   * Run a workflow through the HTTP API with a synthetic parent bound to the
-   * given workspace. Script-only workflows run fully without credentials;
-   * steps that spawn subagents fail loudly because the synthetic parent is
-   * not a live agent — use the chat command/tool for AI workflows.
+   * Run a workflow through the HTTP API. Without `sessionId` a synthetic
+   * parent bound to the given workspace is used: script/llm steps run fully,
+   * but steps that spawn subagents fail loudly and approval gates cannot
+   * prompt. With `sessionId` the run binds to that live root session, so
+   * agent steps spawn real subagents and approval gates surface in its GUI;
+   * `mode: 'job'` (session-bound only) detaches the run as a background job.
    */
   async runApi(input: {
     workspace: string
     workflowRef: string
     values: Record<string, string>
+    sessionId?: string
+    mode?: RunMode
   }): Promise<AceRunHandle> {
     const instance = await loadWorkflow(input.workspace, input.workflowRef)
     let workflow: { config: WorkflowConfig; configFile: string }
@@ -1109,18 +1113,49 @@ export default class AceHarnessService extends Service {
       const instantiated = await this.instantiate(input.workflowRef, undefined, input.values, {})
       workflow = { config: instantiated.config, configFile: input.workflowRef }
     }
-    const parent = {
-      id: 'api-runner' as unknown as SessionId,
-      session: { header: { cwd: input.workspace } },
-      options: {},
-    } as unknown as Agent
+    let parent: Agent
+    if (input.sessionId !== undefined && input.sessionId !== '') {
+      parent = this.requireLiveRoot(input.sessionId)
+    } else {
+      if (input.mode === 'job') {
+        throw new Error('mode=job 需要 sessionId：后台作业必须挂在真实会话上')
+      }
+      parent = {
+        id: 'api-runner' as unknown as SessionId,
+        session: { header: { cwd: input.workspace } },
+        options: {},
+      } as unknown as Agent
+    }
     return this.startRun({
       parent,
       signal: new AbortController().signal,
       workflow,
       inputs: input.values,
-      mode: 'foreground',
+      mode: input.mode ?? 'foreground',
     })
+  }
+
+  /** Live root sessions that can host session-bound runs (approval gates work). */
+  listLiveSessions(): Array<{ id: string; cwd: string; createdAt: number }> {
+    const registry = this.ctx.get('agents') as Pick<AgentRegistry, 'roots'> | undefined
+    return (registry?.roots() ?? []).map((agent) => ({
+      id: agent.session.id,
+      cwd: agent.session.header.cwd ?? '',
+      createdAt: agent.session.header.createdAt,
+    }))
+  }
+
+  /** Resolve a session id to its exact live root agent (runs bind to roots only). */
+  private requireLiveRoot(sessionId: string): Agent {
+    const registry = this.ctx.get('agents') as Pick<AgentRegistry, 'get' | 'roots'> | undefined
+    const agent = registry?.get(sessionId as SessionId)
+    if (!agent) {
+      throw new Error(`会话「${sessionId}」不在线或不存在；可用 GET /plugins/dsh-ace-harness/sessions 查看在线会话`)
+    }
+    if (!(registry?.roots() ?? []).includes(agent)) {
+      throw new Error(`会话「${sessionId}」是子代理会话，不能承载工作流运行（审批门需要根会话）`)
+    }
+    return agent
   }
 
   /** The workspace root the service uses for one agent. */

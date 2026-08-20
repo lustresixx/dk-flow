@@ -451,6 +451,8 @@ export function apply(ctx: Context, config: Config): void {
             workspace?: string
             workflow?: string
             values?: Record<string, string>
+            sessionId?: string
+            mode?: 'foreground' | 'job'
           }
           const workspacePath = body.workspace
           const known = workspaceRegistry.list().map((workspace) => workspace.path)
@@ -464,11 +466,23 @@ export function apply(ctx: Context, config: Config): void {
             res.end('缺少 workflow（实例文件名或模板 id）')
             return
           }
+          if (body.mode === 'job' && (body.sessionId === undefined || body.sessionId === '')) {
+            res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end('mode=job 需要 sessionId：后台作业必须挂在真实会话上')
+            return
+          }
           const handle = await aceHarness.runApi({
             workspace: workspacePath,
             workflowRef: body.workflow,
             values: body.values ?? {},
+            sessionId: body.sessionId,
+            mode: body.mode,
           })
+          if (body.mode === 'job') {
+            res.writeHead(202, { 'content-type': 'application/json; charset=utf-8' })
+            res.end(JSON.stringify({ runId: handle.runId, detached: true }))
+            return
+          }
           const result = await handle.result
           res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
           res.end(
@@ -698,6 +712,16 @@ export function apply(ctx: Context, config: Config): void {
         res.end(JSON.stringify(aceHarness.health()))
       },
     }), 'ace-harness: health route')
+
+    // Live root sessions that can host session-bound workflow runs.
+    ctx.effect(() => webServer.register({
+      kind: 'exact',
+      path: '/plugins/dsh-ace-harness/sessions',
+      handler: async (_req, res) => {
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+        res.end(JSON.stringify({ sessions: aceHarness.listLiveSessions() }))
+      },
+    }), 'ace-harness: sessions route')
 
     // Per-workspace run statistics (archive SQL or JSON scan, same shape).
     ctx.effect(() => webServer.register({
