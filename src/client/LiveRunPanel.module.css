@@ -213,3 +213,54 @@
   word-break: break-all;
   font-family: 'Cascadia Code', Consolas, 'Courier New', monospace;
 }
+
+.trail {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.18);
+  padding: 6px 8px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.trailTitle {
+  font-size: 10px;
+  color: #9a9ab0;
+  margin-bottom: 4px;
+}
+
+.trailList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.trailItem {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 11px;
+}
+
+.trailHead {
+  font-weight: 600;
+  color: #c6c6da;
+}
+
+.trailItem[data-verdict='success'] .trailHead,
+.trailItem[data-verdict='pass'] .trailHead {
+  color: #7dd97d;
+}
+
+.trailItem[data-verdict='fail'] .trailHead {
+  color: #ff9d9d;
+}
+
+.trailOutput {
+  color: #9a9ab0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}

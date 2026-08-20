@@ -235,6 +235,21 @@ export function LiveRunPanel(): JSX.Element | null {
               <span className={styles.stepName}>状态「{snapshot.currentState}」已结束</span>
             )}
           </div>
+          {snapshot.stateOutputs.length > 0 ? (
+            <div className={styles.trail}>
+              <div className={styles.trailTitle}>数据流转（已完成的产出 → 传给下一步）</div>
+              <ol className={styles.trailList}>
+                {snapshot.stateOutputs.map((item) => (
+                  <li key={item.state} className={styles.trailItem} data-verdict={item.verdict}>
+                    <span className={styles.trailHead}>
+                      {item.state} → {VERDICT_TEXT[item.verdict] ?? item.verdict}
+                    </span>
+                    {item.output ? <span className={styles.trailOutput}>{item.output}</span> : null}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ) : null}
           <pre ref={textRef} className={styles.streamText}>
             {snapshot.text === '' ? '（该步骤正在执行，输出即将出现…）' : snapshot.text}
           </pre>

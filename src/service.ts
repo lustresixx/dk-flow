@@ -214,6 +214,8 @@ export interface RunStreamSnapshot {
   states: { name: string; isInitial: boolean; isFinal: boolean; position: { x: number; y: number } | null }[]
   transitions: { from: string; to: string; verdict: string | null; label: string | null }[]
   verdicts: { state: string; verdict: string }[]
+  /** Completed states' actual output heads — the data flowing forward. */
+  stateOutputs: { state: string; verdict: string; output: string }[]
 }
 
 /** Live streaming state for one run, updated by the step executor. */
@@ -405,6 +407,7 @@ export default class AceHarnessService extends Service {
         })),
       ),
       verdicts: [],
+      stateOutputs: [],
       childSessionId: null,
       foldIndex: 0,
     })
@@ -598,6 +601,7 @@ export default class AceHarnessService extends Service {
       states: entry.states,
       transitions: entry.transitions,
       verdicts: entry.verdicts,
+      stateOutputs: entry.stateOutputs,
     }
   }
 
@@ -666,6 +670,14 @@ export default class AceHarnessService extends Service {
           state: outcome.state,
           verdict: outcome.verdict.verdict,
         }))
+        stream.stateOutputs = runState.stateOutcomes.map((outcome) => {
+          const last = outcome.steps[outcome.steps.length - 1]
+          return {
+            state: outcome.state,
+            verdict: outcome.verdict.verdict,
+            output: truncate(last?.outputSummary ?? '', 160),
+          }
+        })
         stream.seq += 1
       }
       this.ctx.emit('ace/run-updated', {

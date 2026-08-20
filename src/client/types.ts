@@ -95,4 +95,6 @@ export interface StreamSnapshotDto {
   states: { name: string; isInitial: boolean; isFinal: boolean; position: { x: number; y: number } | null }[]
   transitions: { from: string; to: string; verdict: string | null; label: string | null }[]
   verdicts: { state: string; verdict: string }[]
+  /** Completed states' actual output heads — the data flowing forward. */
+  stateOutputs: { state: string; verdict: string; output: string }[]
 }
