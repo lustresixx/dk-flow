@@ -121,6 +121,12 @@ export class SqliteArchive {
     if (existing) return existing
     mkdirSync(runStateDir(workspace, runDirName), { recursive: true })
     const db = new DatabaseSync(this.dbFile(workspace, runDirName))
+    // Multi-instance tolerance: WAL lets concurrent readers/writers coexist
+    // (several dsh instances may share one workspace), busy_timeout absorbs
+    // short lock contention instead of erroring into the run path.
+    db.exec('PRAGMA journal_mode = WAL')
+    db.exec('PRAGMA busy_timeout = 5000')
+    db.exec('PRAGMA synchronous = NORMAL')
     db.exec(SCHEMA)
     this.dbs.set(key, db)
     return db
@@ -306,6 +312,43 @@ export class SqliteArchive {
       }
     }
     return imported
+  }
+
+  /**
+   * SQL-side statistics projection: status counts, run timestamps, and the
+   * (state, verdict) matrix extracted from state_json with JSON1.
+   */
+  queryStatsProjection(
+    workspace: string,
+    runDirName: string,
+  ): {
+    byStatus: Array<{ status: string; count: number }>
+    runs: Array<{ startedAt: string; finishedAt: string | null }>
+    stateVerdicts: Array<{ state: string; verdict: string; count: number }>
+  } {
+    const db = this.open(workspace, runDirName)
+    const byStatus = db
+      .prepare('SELECT status, COUNT(*) AS n FROM runs GROUP BY status')
+      .all() as unknown as Array<{ status: string; n: number }>
+    const runs = db
+      .prepare('SELECT started_at, finished_at FROM runs')
+      .all() as unknown as Array<{ started_at: string; finished_at: string | null }>
+    const stateVerdicts = db
+      .prepare(
+        `SELECT json_extract(j.value, '$.state') AS state,
+                json_extract(j.value, '$.verdict.verdict') AS verdict,
+                COUNT(*) AS n
+         FROM runs, json_each(runs.state_json, '$.stateOutcomes') AS j
+         GROUP BY 1, 2`,
+      )
+      .all() as unknown as Array<{ state: string; verdict: string; n: number }>
+    return {
+      byStatus: byStatus.map((row) => ({ status: row.status, count: row.n })),
+      runs: runs.map((row) => ({ startedAt: row.started_at, finishedAt: row.finished_at })),
+      stateVerdicts: stateVerdicts
+        .filter((row) => typeof row.state === 'string' && typeof row.verdict === 'string')
+        .map((row) => ({ state: row.state, verdict: row.verdict, count: row.n })),
+    }
   }
 
   /** Close every open archive database. */

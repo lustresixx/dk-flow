@@ -4,8 +4,9 @@
  * repeated reads stay cheap.
  * @module dsh-ace-harness/store
  */
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
+import { writeFileAtomic } from './atomic.js'
 import { runStateDir } from './paths.js'
 
 /** Workspace-level toggles. Every field defaults to off/false. */
@@ -68,7 +69,7 @@ export async function writeWorkspaceSettings(
   const next: WorkspaceSettings = { ...current, ...patch }
   const file = settingsFile(workspace, runDirName)
   await mkdir(runStateDir(workspace, runDirName), { recursive: true })
-  await writeFile(file, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
+  await writeFileAtomic(file, `${JSON.stringify(next, null, 2)}\n`)
   cache.set(file, { mtimeMs: (await stat(file)).mtimeMs, value: next })
   return next
 }

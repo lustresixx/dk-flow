@@ -45,7 +45,9 @@ import { captureGitSnapshot, saveGitSnapshot } from './store/git-baseline.js'
 import { appendExperience, loadRecentExperience, renderExperience } from './store/experience.js'
 import { workspaceRoot } from './store/paths.js'
 import { appendAudit, listRunStates, loadRunState, saveRunState } from './store/run-store.js'
+import { EMPTY_PROGRESS_TRACK, progressAuditEvents, runDurationMs, sha256Text, type RunProgressTrack } from './store/audit-events.js'
 import { SqliteArchive, type ArchivedAuditRow, type ArchivedRunRow } from './store/sqlite-archive.js'
+import { aggregateRunStats, combineStatsProjection, type WorkspaceRunStats } from './store/run-stats.js'
 import { readWorkspaceSettings, writeWorkspaceSettings } from './store/workspace-settings.js'
 import { deleteWorkflow, listWorkflows, loadWorkflow, saveWorkflow, type WorkflowEntry } from './store/workflow-store.js'
 import {
@@ -308,6 +310,8 @@ export default class AceHarnessService extends Service {
   private readonly active = new Map<string, AbortController>()
   private readonly streams = new Map<string, RunStreamState>()
   private readonly archive = new SqliteArchive()
+  /** Audit enrichment cursors: per-run position for state-end diffing. */
+  private readonly progressTrack = new Map<string, RunProgressTrack>()
 
   constructor(ctx: Context, config: AceHarnessConfig = {}) {
     super(ctx, 'ace-harness')
@@ -819,6 +823,8 @@ export default class AceHarnessService extends Service {
       at: state.startedAt,
       event: 'start',
       workflow: input.workflow.config.workflow.name,
+      // Tamper-evident: which exact workflow content launched this run.
+      workflowHash: sha256Text(JSON.stringify(input.workflow.config)),
     })
 
     // Git baseline snapshot when the workflow runs against a repository.
@@ -966,11 +972,15 @@ export default class AceHarnessService extends Service {
             }, 10 * 60_000)
             stream.pruneTimer.unref?.()
           }
+          this.progressTrack.delete(runId)
           await this.writeAudit(workspace, runId, {
             at: new Date().toISOString(),
             event: 'end',
             status: runResult.status,
             error: runResult.error,
+            // Tamper-evident evidence-chain digest + run wall clock.
+            evidenceHash: sha256Text(JSON.stringify(runResult.stateOutcomes)),
+            durationMs: runDurationMs(runResult.stateOutcomes),
           })
           return runResult
         })
@@ -1186,6 +1196,35 @@ export default class AceHarnessService extends Service {
     this.archive.close()
   }
 
+  /** Workspace run statistics (archive SQL when enabled, JSON scan otherwise). */
+  async workspaceStats(workspace: string): Promise<WorkspaceRunStats & { archiveEnabled: boolean; activeRuns: number }> {
+    const enabled = await this.sqliteEnabled(workspace)
+    const stats: WorkspaceRunStats = enabled
+      ? combineStatsProjection(this.archive.queryStatsProjection(workspace, this.config.runDirName))
+      : aggregateRunStats(
+          (await listRunStates(workspace, this.config.runDirName)).map((state) => ({
+            status: state.status,
+            startedAt: state.startedAt,
+            finishedAt: state.finishedAt,
+            states: state.stateOutcomes.map((outcome) => ({
+              state: outcome.state,
+              verdict: outcome.verdict.verdict,
+            })),
+          })),
+        )
+    return { ...stats, archiveEnabled: enabled, activeRuns: this.active.size }
+  }
+
+  /** Liveness + activity snapshot for monitoring probes. */
+  health(): { ok: true; activeRuns: number; streamingRuns: number; uptimeSec: number } {
+    return {
+      ok: true,
+      activeRuns: this.active.size,
+      streamingRuns: this.streams.size,
+      uptimeSec: Math.round(process.uptime()),
+    }
+  }
+
   private engineOptions(
     workspace: string,
     parent: Agent,
@@ -1206,6 +1245,15 @@ export default class AceHarnessService extends Service {
         } catch {
           // Archive is a mirror; ignore write failures.
         }
+      }
+      // Evidence chain: diff the snapshot into granular audit events
+      // (state-end / waiting-human / human-resolved) so the audit timeline
+      // tells the full story, not just start/resume/end.
+      const tracked = this.progressTrack.get(runId) ?? EMPTY_PROGRESS_TRACK
+      const derived = progressAuditEvents(tracked, runState)
+      this.progressTrack.set(runId, derived.next)
+      for (const event of derived.events) {
+        await this.writeAudit(workspace, runId, event)
       }
       const stream = this.streams.get(runId)
       if (stream) {

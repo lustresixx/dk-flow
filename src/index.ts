@@ -527,7 +527,13 @@ export function apply(ctx: Context, config: Config): void {
             res.end('缺少 state / step')
             return
           }
-          const workspacePath = body.workspace ?? workspaceRegistry.list()[0]?.path ?? ''
+          const known = workspaceRegistry.list().map((workspace) => workspace.path)
+          const workspacePath = body.workspace ?? known[0] ?? ''
+          if (!known.includes(workspacePath)) {
+            res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end('workspace 不在已知工作区列表中')
+            return
+          }
           let config: WorkflowConfig
           if (body.yaml) {
             config = parseWorkflowYaml(body.yaml)
@@ -596,7 +602,13 @@ export function apply(ctx: Context, config: Config): void {
             res.end('缺少 state')
             return
           }
-          const workspacePath = body.workspace ?? workspaceRegistry.list()[0]?.path ?? ''
+          const known = workspaceRegistry.list().map((workspace) => workspace.path)
+          const workspacePath = body.workspace ?? known[0] ?? ''
+          if (!known.includes(workspacePath)) {
+            res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end('workspace 不在已知工作区列表中')
+            return
+          }
           let config: WorkflowConfig
           if (body.yaml) {
             config = parseWorkflowYaml(body.yaml)
@@ -676,6 +688,39 @@ export function apply(ctx: Context, config: Config): void {
         }
       },
     }), 'ace-harness: workspace-settings route')
+
+    // Liveness/activity probe for monitoring.
+    ctx.effect(() => webServer.register({
+      kind: 'exact',
+      path: '/plugins/dsh-ace-harness/health',
+      handler: async (_req, res) => {
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+        res.end(JSON.stringify(aceHarness.health()))
+      },
+    }), 'ace-harness: health route')
+
+    // Per-workspace run statistics (archive SQL or JSON scan, same shape).
+    ctx.effect(() => webServer.register({
+      kind: 'exact',
+      path: '/plugins/dsh-ace-harness/stats',
+      handler: async (req, res) => {
+        try {
+          const url = new URL(req.url ?? '/', 'http://x')
+          const known = workspaceRegistry.list().map((workspace) => workspace.path)
+          const workspacePath = url.searchParams.get('workspace') ?? known[0] ?? ''
+          if (!known.includes(workspacePath)) {
+            res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end(`未知工作区「${workspacePath}」`)
+            return
+          }
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+          res.end(JSON.stringify(await aceHarness.workspaceStats(workspacePath)))
+        } catch (error) {
+          res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+          res.end(String((error as Error).message))
+        }
+      },
+    }), 'ace-harness: stats route')
 
     // Archived run history from the SQLite mirror (list + full evidence chain).
     ctx.effect(() => webServer.register({

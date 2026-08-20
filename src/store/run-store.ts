@@ -4,9 +4,10 @@
  * append-only `audit.jsonl` event log. Writes are temp-file + rename.
  * @module dsh-ace-harness/store
  */
-import { appendFile, mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { RunState } from '../engine/types.js'
+import { writeFileAtomic } from './atomic.js'
 import { runDir, runsRoot } from './paths.js'
 
 /** Persist one run state snapshot (atomic replace). */
@@ -17,10 +18,7 @@ export async function saveRunState(
 ): Promise<void> {
   const dir = runDir(workspace, state.id, runDirName)
   await mkdir(dir, { recursive: true })
-  const file = join(dir, 'state.json')
-  const temp = `${file}.tmp`
-  await writeFile(temp, JSON.stringify(state, null, 2), 'utf8')
-  await rename(temp, file)
+  await writeFileAtomic(join(dir, 'state.json'), JSON.stringify(state, null, 2))
 }
 
 /** Load a persisted run state, or null when absent or unreadable. */

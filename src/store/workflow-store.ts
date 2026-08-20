@@ -4,10 +4,11 @@
  * name. Built-in templates live in the packaged resources.
  * @module dsh-ace-harness/store
  */
-import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rm } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { parseWorkflowYaml, summarizeWorkflow, type WorkflowSummary } from '../dsl/load.js'
 import type { WorkflowConfig } from '../dsl/types.js'
+import { writeFileAtomic } from './atomic.js'
 import { personalWorkflowsDir, projectWorkflowsDir } from './paths.js'
 
 /** One discovered workflow instance. */
@@ -112,9 +113,7 @@ export async function saveWorkflow(
     throw new Error(`workflow 文件名非法：${safeName}（只允许字母、数字、下划线、连字符）`)
   }
   const file = join(dir, safeName)
-  const temp = `${file}.tmp`
-  await writeFile(temp, yamlText, 'utf8')
-  await rename(temp, file)
+  await writeFileAtomic(file, yamlText)
   return file
 }
 

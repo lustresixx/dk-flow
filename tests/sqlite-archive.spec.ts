@@ -105,6 +105,29 @@ describe('SqliteArchive', () => {
     archive.close()
   })
 
+  it('opens in WAL mode for multi-instance tolerance', async () => {
+    const archive = new SqliteArchive()
+    archive.archiveRun(workspace, '.ace-workflows', makeRun('run-wal'))
+    const { DatabaseSync } = await import('node:sqlite')
+    const probe = new DatabaseSync(join(workspace, '.ace-workflows', 'archive.db'), { open: true })
+    const mode = probe.prepare('PRAGMA journal_mode').get() as { journal_mode: string }
+    expect(mode.journal_mode).toBe('wal')
+    probe.close()
+    archive.close()
+  })
+
+  it('extracts the SQL stats projection (status counts, durations, state matrix)', () => {
+    const archive = new SqliteArchive()
+    archive.archiveRun(workspace, '.ace-workflows', makeRun('run-s1', { status: 'completed', finishedAt: '2026-08-20T10:04:00.000Z' }))
+    archive.archiveRun(workspace, '.ace-workflows', makeRun('run-s2', { status: 'failed', workflowName: 'B' }))
+    const projection = archive.queryStatsProjection(workspace, '.ace-workflows')
+    expect(projection.byStatus).toContainEqual({ status: 'completed', count: 1 })
+    expect(projection.byStatus).toContainEqual({ status: 'failed', count: 1 })
+    expect(projection.runs).toHaveLength(2)
+    expect(projection.stateVerdicts).toContainEqual({ state: '状态一', verdict: 'success', count: 2 })
+    archive.close()
+  })
+
   it('backfills the file-based run store and imports audit logs once', async () => {
     await saveRunState(workspace, makeRun('run-file-1'), '.ace-workflows')
     await appendAudit(workspace, 'run-file-1', '.ace-workflows', { at: '2026-08-20T10:00:00.000Z', event: 'start' })
@@ -118,6 +141,56 @@ describe('SqliteArchive', () => {
     // A second backfill upserts runs but must not duplicate audit rows.
     await archive.backfill(workspace, '.ace-workflows')
     expect(archive.queryRunDetail(workspace, '.ace-workflows', 'run-file-1')?.audit).toHaveLength(2)
+    archive.close()
+  })
+})
+
+describe('SqliteArchive performance', () => {
+  it('sustains 1000 snapshot upserts within the persist budget', () => {
+    const archive = new SqliteArchive()
+    const state = makeRun('run-perf')
+    const t0 = performance.now()
+    for (let index = 0; index < 1000; index += 1) {
+      archive.archiveRun(workspace, '.ace-workflows', { ...state, id: `run-perf-${index}` })
+    }
+    const insertMs = performance.now() - t0
+    console.log(`  [perf] 1000 upserts: ${insertMs.toFixed(0)}ms (${(insertMs / 1000).toFixed(2)}ms/op)`)
+    expect(insertMs).toBeLessThan(3000)
+    // Same-id upsert (the hot path during one run's progress):
+    const t1 = performance.now()
+    for (let index = 0; index < 500; index += 1) {
+      archive.archiveRun(workspace, '.ace-workflows', { ...state, completedSteps: index % 10 })
+    }
+    const upsertMs = performance.now() - t1
+    console.log(`  [perf] 500 same-id upserts: ${upsertMs.toFixed(0)}ms (${(upsertMs / 500).toFixed(2)}ms/op)`)
+    expect(upsertMs).toBeLessThan(1500)
+    archive.close()
+  })
+
+  it('queries stay fast over 1000 archived runs', () => {
+    const archive = new SqliteArchive()
+    for (let index = 0; index < 1000; index += 1) {
+      archive.archiveRun(workspace, '.ace-workflows', {
+        ...makeRun(`run-q-${index}`),
+        status: index % 7 === 0 ? 'failed' : 'completed',
+      })
+    }
+    const t0 = performance.now()
+    const page = archive.queryRuns(workspace, '.ace-workflows', { limit: 50 })
+    const queryMs = performance.now() - t0
+    const t1 = performance.now()
+    const projection = archive.queryStatsProjection(workspace, '.ace-workflows')
+    const statsMs = performance.now() - t1
+    const t2 = performance.now()
+    const detail = archive.queryRunDetail(workspace, '.ace-workflows', 'run-q-500')
+    const detailMs = performance.now() - t2
+    console.log(`  [perf] page=${queryMs.toFixed(1)}ms stats=${statsMs.toFixed(1)}ms detail=${detailMs.toFixed(1)}ms over 1000 runs`)
+    expect(page).toHaveLength(50)
+    expect(queryMs).toBeLessThan(100)
+    expect(statsMs).toBeLessThan(500)
+    expect(detail?.run.runId).toBe('run-q-500')
+    expect(detailMs).toBeLessThan(50)
+    expect(projection.byStatus.reduce((sum, row) => sum + row.count, 0)).toBe(1000)
     archive.close()
   })
 })
