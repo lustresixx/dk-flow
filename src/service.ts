@@ -143,6 +143,15 @@ function extractScore(text: string): { score: number | null; advice: string } {
   return { score: null, advice: text }
 }
 
+/**
+ * Approval-gate option labels doubling as protocol tokens. The
+ * dsh-user-questions rc.7 answer shape carries no stable value channel, so
+ * the selected LABEL is the token — these strings are the contract between
+ * the option list and the response mapping. Change both sides together.
+ */
+const APPROVAL_CONTINUE_LABEL = '批准，继续运行'
+const APPROVAL_STOP_LABEL = '停止运行'
+
 /** ACE catalog tool names mapped onto DSH tool names (candidates in order). */
 const ACE_TOOL_MAP: Record<string, readonly string[]> = {
   Bash: ['bash', 'pwsh'],
@@ -1383,8 +1392,8 @@ export default class AceHarnessService extends Service {
                 : `工作流在状态「${state}」暂停，请选择下一步：`,
               options: approval
                 ? [
-                    { label: '批准，继续运行', description: '进入下一状态' },
-                    { label: '停止运行', description: '以人工停止结束本次运行' },
+                    { label: APPROVAL_CONTINUE_LABEL, description: '进入下一状态' },
+                    { label: APPROVAL_STOP_LABEL, description: '以人工停止结束本次运行' },
                   ]
                 : candidates.map((candidate) => ({ label: candidate })),
             },
@@ -1393,8 +1402,8 @@ export default class AceHarnessService extends Service {
           signal: askSignal,
         })
         const selected = answer.answers[0]?.selected[0] ?? ''
-        if (approval && selected === '批准，继续运行') return '__continue__'
-        if (approval && selected === '停止运行') return 'stop'
+        if (approval && selected === APPROVAL_CONTINUE_LABEL) return '__continue__'
+        if (approval && selected === APPROVAL_STOP_LABEL) return 'stop'
         return selected
       },
     }

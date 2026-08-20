@@ -164,6 +164,14 @@ export function apply(ctx: Context, config: Config): void {
     if (webServer === undefined || workspaceRegistry === undefined) return
     webRegistered = true
 
+    // Config-derived payloads are cached briefly: the state route is polled by
+    // the panel and queried per keystroke by the slash menu, and re-reading
+    // every workflow/run config on each call made the menu lag. The maps live
+    // at route-registration scope (not per request) so the cache actually
+    // holds across calls; keys, TTL, and hit logic are unchanged.
+    const topologyCache = new Map<string, { at: number; value: StateTopology | null }>()
+    const taskFieldsCache = new Map<string, { at: number; value: StateTaskField[] }>()
+
     ctx.effect(() => webServer.register({
       kind: 'exact',
       path: '/plugins/dsh-ace-harness/state',
@@ -178,11 +186,6 @@ export function apply(ctx: Context, config: Config): void {
           // session workspace (or ?workspace=<path> when supplied).
           const wanted = url.searchParams.get('workspace')
           const roots = wanted ? workspaces.filter((w) => w.path === wanted) : workspaces
-          // Config-derived payloads are cached briefly: this route is polled by
-          // the panel and queried per keystroke by the slash menu, and re-reading
-          // every workflow/run config on each call made the menu lag.
-          const topologyCache = new Map<string, { at: number; value: StateTopology | null }>()
-          const taskFieldsCache = new Map<string, { at: number; value: StateTaskField[] }>()
           const cachedTopology = async (workspace: string, configFile: string): Promise<StateTopology | null> => {
             const key = `${workspace}\u0000${configFile}`
             const hit = topologyCache.get(key)

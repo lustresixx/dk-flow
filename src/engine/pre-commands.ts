@@ -56,6 +56,11 @@ export function runPreCommand(
     )
     const onAbort = (): void => {
       cleanup()
+      // Kill the spawned shell so a stopped run does not leave the command
+      // executing (leaked process + write races on the workspace). Known
+      // boundary: on Windows the exec shell's own children (grandchild
+      // processes) may survive the kill of the immediate child.
+      child.kill()
       rejectPromise(new Error('preCommand aborted'))
     }
     const cleanup = (): void => {
