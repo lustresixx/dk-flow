@@ -793,18 +793,23 @@ export default class AceHarnessService extends Service {
             stream.childSessionId = childId
             // Fold the child transcript into the live stream while it runs.
             poller = setInterval(() => {
-              const entry = service.streams.get(parentRunId)
-              if (!entry || entry.childSessionId !== childId) return
-              const session = service.ctx.sessions.get(childId)
-              if (!session) return
-              const fold = foldAssistantText(
-                session.events as readonly StreamEventLike[],
-                entry.foldIndex,
-              )
-              entry.foldIndex = fold.index
-              if (fold.text !== '') {
-                entry.text += fold.text
-                entry.seq += 1
+              try {
+                const entry = service.streams.get(parentRunId)
+                if (!entry || entry.childSessionId !== childId) return
+                const session = service.ctx.sessions.get(childId)
+                if (!session) return
+                const fold = foldAssistantText(
+                  session.events as readonly StreamEventLike[],
+                  entry.foldIndex,
+                )
+                entry.foldIndex = fold.index
+                if (fold.text !== '') {
+                  entry.text += fold.text
+                  entry.seq += 1
+                }
+              } catch (error) {
+                // A streaming poller failure must never take down the host.
+                service.ctx.logger('ace-harness').debug(`stream poll failed: ${String(error)}`)
               }
             }, 800)
           }

@@ -49,7 +49,7 @@ function assetsRoot(): URL {
 export const name = 'ace-harness'
 
 /** Host services this plugin waits for before activation. */
-export const inject = ['tools', 'subagents', 'commands', 'userQuestions', 'systemPrompt']
+export const inject = ['tools', 'subagents', 'commands', 'userQuestions', 'systemPrompt', 'sessions']
 
 /** Plugin configuration, settable from the cordis.patch.yml row. */
 export interface Config extends AceHarnessConfig {
