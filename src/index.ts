@@ -83,6 +83,22 @@ interface WebRouteHost {
   }): () => void
 }
 
+/** Workflow topology slice served with each run in the state route. */
+interface StateTopology {
+  states: { name: string; isInitial: boolean; isFinal: boolean; position: { x: number; y: number } | null }[]
+  transitions: { from: string; to: string; verdict: string | null; label: string | null }[]
+}
+
+/** Run-time input field slice served with each workflow in the state route. */
+interface StateTaskField {
+  id: string
+  label: string
+  type: string
+  required: boolean
+  placeholder: string
+  description: string
+}
+
 /** Structural slice of the workspace registry: paths with display titles. */
 interface WorkspaceRegistryLike {
   list(): { title: string; path: string }[]
@@ -148,53 +164,77 @@ export function apply(ctx: Context, config: Config): void {
           // session workspace (or ?workspace=<path> when supplied).
           const wanted = url.searchParams.get('workspace')
           const roots = wanted ? workspaces.filter((w) => w.path === wanted) : workspaces
+          // Config-derived payloads are cached briefly: this route is polled by
+          // the panel and queried per keystroke by the slash menu, and re-reading
+          // every workflow/run config on each call made the menu lag.
+          const topologyCache = new Map<string, { at: number; value: StateTopology | null }>()
+          const taskFieldsCache = new Map<string, { at: number; value: StateTaskField[] }>()
+          const cachedTopology = async (workspace: string, configFile: string): Promise<StateTopology | null> => {
+            const key = `${workspace}\u0000${configFile}`
+            const hit = topologyCache.get(key)
+            if (hit && Date.now() - hit.at < 30_000) return hit.value
+            let value: StateTopology | null = null
+            try {
+              const resolved = await aceHarness.resolveWorkflowConfig(workspace, configFile)
+              if (resolved) {
+                value = {
+                  states: resolved.config.workflow.states.map((state) => ({
+                    name: state.name,
+                    isInitial: state.isInitial,
+                    isFinal: state.isFinal,
+                    position: state.position ?? null,
+                  })),
+                  transitions: resolved.config.workflow.states.flatMap((state) =>
+                    state.transitions.map((transition) => ({
+                      from: state.name,
+                      to: transition.to,
+                      verdict: transition.condition.verdict ?? null,
+                      label: transition.label ?? null,
+                    })),
+                  ),
+                }
+              }
+            } catch {
+              // Unreadable workflow config: the run detail renders without a diagram.
+            }
+            topologyCache.set(key, { at: Date.now(), value })
+            return value
+          }
+          const cachedTaskFields = async (workspace: string, fileName: string): Promise<StateTaskField[]> => {
+            const key = `${workspace}\u0000${fileName}`
+            const hit = taskFieldsCache.get(key)
+            if (hit && Date.now() - hit.at < 30_000) return hit.value
+            const loaded = await aceHarness.loadWorkflowConfig(workspace, fileName)
+            const value = (loaded?.config.context?.taskInput?.fields ?? []).map((field) => ({
+              id: field.id,
+              label: field.label,
+              type: field.type ?? 'text',
+              required: field.required ?? false,
+              placeholder: field.placeholder ?? '',
+              description: field.description ?? '',
+            }))
+            taskFieldsCache.set(key, { at: Date.now(), value })
+            return value
+          }
           const [agents, templates, runsByWorkspace, workflowsByWorkspace] = await Promise.all([
             aceHarness.listAgents(),
             aceHarness.listTemplates(),
             Promise.all(roots.map(async (w) => ({
               path: w.path,
               runs: await Promise.all(
-                (await aceHarness.listRuns(w.path)).map(async (run) => {
-                  // Attach the workflow topology so the UI can render the
-                  // state diagram with per-state outcomes.
-                  let topology: {
-                    states: { name: string; isInitial: boolean; isFinal: boolean; position: { x: number; y: number } | null }[]
-                    transitions: { from: string; to: string; verdict: string | null; label: string | null }[]
-                  } | null = null
-                  try {
-                    const resolved = await aceHarness.resolveWorkflowConfig(w.path, run.configFile)
-                    if (resolved) {
-                      topology = {
-                        states: resolved.config.workflow.states.map((state) => ({
-                          name: state.name,
-                          isInitial: state.isInitial,
-                          isFinal: state.isFinal,
-                          position: state.position ?? null,
-                        })),
-                        transitions: resolved.config.workflow.states.flatMap((state) =>
-                          state.transitions.map((transition) => ({
-                            from: state.name,
-                            to: transition.to,
-                            verdict: transition.condition.verdict ?? null,
-                            label: transition.label ?? null,
-                          })),
-                        ),
-                      }
-                    }
-                  } catch {
-                    // Unreadable workflow config: the run detail renders without a diagram.
-                  }
-                  return { run, topology }
-                }),
+                (await aceHarness.listRuns(w.path)).map(async (run) => ({
+                  run,
+                  topology: await cachedTopology(w.path, run.configFile),
+                })),
               ),
             }))),
             Promise.all(roots.map(async (w) => ({
               path: w.path,
               workflows: await Promise.all(
-                (await aceHarness.listWorkflows(w.path)).map(async (entry) => {
-                  const loaded = await aceHarness.loadWorkflowConfig(w.path, entry.fileName)
-                  return { entry, taskFields: loaded?.config.context?.taskInput?.fields ?? [] }
-                }),
+                (await aceHarness.listWorkflows(w.path)).map(async (entry) => ({
+                  entry,
+                  taskFields: await cachedTaskFields(w.path, entry.fileName),
+                })),
               ),
             }))),
           ])
@@ -267,14 +307,7 @@ export function apply(ctx: Context, config: Config): void {
               source: w.source,
               stateCount: w.summary.stateCount,
               stepCount: w.summary.stepCount,
-              taskFields: taskFields.map((field) => ({
-                id: field.id,
-                label: field.label,
-                type: field.type ?? 'text',
-                required: field.required ?? false,
-                placeholder: field.placeholder ?? '',
-                description: field.description ?? '',
-              })),
+              taskFields,
             })) ?? [],
           })),
         })

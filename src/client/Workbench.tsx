@@ -290,6 +290,22 @@ function TemplateDetail(props: {
   instantiateForEdit: (templateId: string, values: Record<string, string>, workspacePath: string, fileName: string) => void
 }): JSX.Element {
   const { template } = props
+  // Run-time parameter form for 直接运行 only; creation stays parameter-free.
+  const [inputs, setInputs] = useState<Record<string, string>>(() => {
+    const defaults: Record<string, string> = {}
+    for (const parameter of template.parameters) {
+      if (parameter.default !== undefined && parameter.default !== '') {
+        defaults[parameter.id] = String(parameter.default)
+      }
+    }
+    return defaults
+  })
+  const set = (id: string, value: string): void => { setInputs({ ...inputs, [id]: value }) }
+  const missing = template.parameters.filter(
+    (parameter) => parameter.required && (inputs[parameter.id] ?? '').trim() === '',
+  )
+  const filled = Object.entries(inputs).filter(([, value]) => value.trim() !== '')
+  const paramFlags = filled.map(([id, value]) => `--param ${id}=${encodeURIComponent(value)}`).join(' ')
   return (
     <div className={styles.detail}>
       <h2 className={styles.detailTitle}>
@@ -310,9 +326,24 @@ function TemplateDetail(props: {
           </li>
         ))}
       </ol>
-      <p className={styles.formHint}>创建时不填参数：留空的必填参数会在启动工作流时询问。</p>
+      {template.parameters.length > 0 ? (
+        <>
+          <h3 className={styles.sectionTitle}>运行参数（仅本次运行生效）</h3>
+          <div className={styles.form}>
+            {template.parameters.map((parameter) => (
+              <TemplateParamField key={parameter.id} parameter={parameter} value={inputs[parameter.id] ?? ''} onChange={(value) => { set(parameter.id, value) }} />
+            ))}
+          </div>
+        </>
+      ) : null}
+      {missing.length > 0 ? <p className={styles.errorText}>请先填写必填参数：{missing.map((p) => p.label).join('、')}</p> : null}
       <div className={styles.actions}>
-        <button type="button" className={styles.primary} onClick={() => { void props.submit(`/workflow run ${template.id}`) }}>
+        <button
+          type="button"
+          className={styles.primary}
+          disabled={missing.length > 0}
+          onClick={() => { void props.submit(`/workflow run ${template.id} ${paramFlags}`) }}
+        >
           直接运行
         </button>
         <button
@@ -325,7 +356,53 @@ function TemplateDetail(props: {
           创建并编排
         </button>
       </div>
+      <p className={styles.formHint}>创建时不填参数：留空的必填参数会在启动工作流时询问。</p>
     </div>
+  )
+}
+
+/** One run-time parameter field of a template (enum / text / others). */
+function TemplateParamField(props: {
+  parameter: StateTemplateDto['parameters'][number]
+  value: string
+  onChange: (value: string) => void
+}): JSX.Element {
+  const { parameter, value, onChange } = props
+  if (parameter.type === 'enum' && parameter.options) {
+    return (
+      <label className={styles.field}>
+        <span className={styles.label}>
+          {parameter.label}
+          {parameter.required ? <span className={styles.required}>*</span> : null}
+        </span>
+        <select value={value} onChange={(event) => { onChange(event.target.value) }}>
+          <option value="">请选择</option>
+          {parameter.options.map((option) => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select>
+      </label>
+    )
+  }
+  if (parameter.type === 'text') {
+    return (
+      <label className={styles.field}>
+        <span className={styles.label}>
+          {parameter.label}
+          {parameter.required ? <span className={styles.required}>*</span> : null}
+        </span>
+        <textarea rows={3} value={value} placeholder={parameter.description ?? ''} onChange={(event) => { onChange(event.target.value) }} />
+      </label>
+    )
+  }
+  return (
+    <label className={styles.field}>
+      <span className={styles.label}>
+        {parameter.label}
+        {parameter.required ? <span className={styles.required}>*</span> : null}
+      </span>
+      <input type="text" value={value} placeholder={parameter.description ?? ''} onChange={(event) => { onChange(event.target.value) }} />
+    </label>
   )
 }
 
@@ -341,6 +418,7 @@ function WorkflowDetail(props: {
   const fields = workflow.taskFields
   const filled = Object.entries(inputs).filter(([, value]) => value.trim() !== '')
   const paramFlags = filled.map(([id, value]) => `--param ${id}=${encodeURIComponent(value)}`).join(' ')
+  const missing = fields.filter((field) => field.required && (inputs[field.id] ?? '').trim() === '')
   return (
     <div className={styles.detail}>
       <h2 className={styles.detailTitle}>{workflow.name}</h2>
@@ -349,7 +427,7 @@ function WorkflowDetail(props: {
       </p>
       {fields.length > 0 ? (
         <>
-          <h3 className={styles.sectionTitle}>运行参数（留空会在运行时询问）</h3>
+          <h3 className={styles.sectionTitle}>运行参数</h3>
           <div className={styles.form}>
             {fields.map((field) => (
               <TaskField key={field.id} field={field} value={inputs[field.id] ?? ''} onChange={(value) => { set(field.id, value) }} />
@@ -357,8 +435,14 @@ function WorkflowDetail(props: {
           </div>
         </>
       ) : null}
+      {missing.length > 0 ? <p className={styles.errorText}>请先填写必填参数：{missing.map((field) => field.label).join('、')}</p> : null}
       <div className={styles.actions}>
-        <button type="button" className={styles.primary} onClick={() => { void props.submit(`/workflow run ${workflow.fileName} ${paramFlags}`) }}>
+        <button
+          type="button"
+          className={styles.primary}
+          disabled={missing.length > 0}
+          onClick={() => { void props.submit(`/workflow run ${workflow.fileName} ${paramFlags}`) }}
+        >
           运行
         </button>
         <button type="button" className={styles.secondary} onClick={() => { props.onEdit(workflow.fileName) }}>
