@@ -117,6 +117,10 @@ workflow:
             严格按「方案定稿」批准的变更清单实施改造：
             小步提交、每项变更记录（改了什么/为什么/对应哪个问题），
             不动方案之外的部分；发现方案与代码实际不符时停下并说明。
+            铁律：禁止 git reset --hard / git checkout -- . / git clean 等破坏性
+            操作；遇到不属于你的未提交改动，原样保留并绕开（只 add 自己批次
+            的文件），绝不丢弃他人工作。此前批次可能已在 git 历史中完成，
+            先核对再续做剩余批次。
       transitions:
         - { to: 回归验证, condition: { verdict: success }, priority: 10, label: 成功 }
         - { to: 回归验证, condition: { verdict: conditional_pass }, priority: 15, label: 附条件回归 }

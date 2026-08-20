@@ -28,7 +28,7 @@ import {
 } from './engine/types.js'
 import { runDurationMs, sha256Text } from './store/audit-events.js'
 import { captureGitSnapshot, saveGitSnapshot } from './store/git-baseline.js'
-import { loadRunState } from './store/run-store.js'
+import { loadRunState, saveRunState } from './store/run-store.js'
 import type { AceHarnessConfig } from './service.js'
 import { jobOutcomeFor, type JobOutcomeLike } from './step-executor-factory.js'
 import { projectRunStateToStream, type RunPersistence } from './run-persistence.js'
@@ -259,15 +259,32 @@ export class RunLifecycle {
     const workspace = this.deps.workspaceOf(input.parent)
     const persisted = await loadRunState(workspace, input.runId, config.runDirName)
     if (!persisted) throw new Error(`未找到运行 ${input.runId}`)
+    // Ownership: a live owning session binds the run exclusively. When the
+    // owner is gone (its process exited — one-shot/headless sessions), the
+    // run is an orphan: any live root session may adopt it, and the adoption
+    // rebinds parentSessionId so later resumes belong to the adopter.
+    let adoptedFrom: string | undefined
     if (persisted.parentSessionId !== input.parent.session.id) {
-      throw new Error('只有启动该运行的会话才能恢复它')
+      const agents = this.deps.ctx.get('agents') as { get(id: never): Agent | undefined } | undefined
+      const ownerLive =
+        persisted.parentSessionId !== undefined &&
+        agents?.get(persisted.parentSessionId as never) !== undefined
+      if (ownerLive) throw new Error('只有启动该运行的会话才能恢复它')
+      adoptedFrom = persisted.parentSessionId
+      persisted.parentSessionId = input.parent.session.id
     }
-    // Fail fast on terminal runs: the engine rejects them too, but only after
-    // the job was already registered, which used to surface as a fake
-    // "resumed" whose real error vanished inside the background job.
-    const terminal: RunState['status'][] = ['completed', 'failed', 'crashed', 'stopped']
-    if (terminal.includes(persisted.status)) {
-      throw new Error(`运行 ${input.runId} 已处于终态 ${persisted.status}，无法恢复`)
+    // Fail fast on completed runs; infrastructure-terminal runs (failed /
+    // crashed / stopped) stay resumable — the engine continues from
+    // pendingState/pendingHuman exactly like a waiting-human resume. Without
+    // this, a step timeout would strand every long workflow for good.
+    if (persisted.status === 'completed') {
+      throw new Error(`运行 ${input.runId} 已完成，无需恢复`)
+    }
+    const resetFrom = ['failed', 'crashed', 'stopped'].includes(persisted.status) ? persisted.status : undefined
+    if (resetFrom !== undefined) persisted.status = 'running'
+    if (adoptedFrom !== undefined || resetFrom !== undefined) {
+      // Durable adoption/status reset before the engine's first persist.
+      await saveRunState(workspace, persisted, config.runDirName)
     }
     if (registry.isActive(input.runId)) {
       throw new Error(`运行 ${input.runId} 正在执行中`)
@@ -304,11 +321,13 @@ export class RunLifecycle {
       inputs: {},
     })
     // Traceable resume: mirror the 'start' audit row so a resumed run's log
-    // shows who continued it and when.
+    // shows who continued it and when; adoption/status resets are recorded.
     await persistence.writeAudit(workspace, input.runId, {
       at: new Date().toISOString(),
       event: 'resume',
       workflow: persisted.workflowName,
+      ...(adoptedFrom !== undefined ? { adoptedFrom } : {}),
+      ...(resetFrom !== undefined ? { resetFrom } : {}),
     })
     const begin = this.beginRun(workspace, input.runId, options)
     if (input.mode === 'job') {
