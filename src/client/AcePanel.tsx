@@ -1,8 +1,10 @@
 /**
- * The workbench launcher: a floating button (with the ACE logo) that opens
- * the full-page workflow workbench.
+ * The workbench launcher plus the live run sidebar: a floating button (with
+ * the ACE logo) opens the full-page workbench, while the live panel appears
+ * automatically on the right while a workflow is running.
  */
 import { useState } from 'react'
+import { LiveRunPanel } from './LiveRunPanel.tsx'
 import { Workbench } from './Workbench.tsx'
 import styles from './AcePanel.module.css'
 
@@ -16,13 +18,17 @@ export interface AcePanelProps {
 export function AcePanel(props: AcePanelProps): JSX.Element {
   const [open, setOpen] = useState(false)
   void props.currentSessionId
-  if (open) {
-    return <Workbench send={props.send} onClose={() => { setOpen(false) }} />
-  }
   return (
-    <button type="button" className={styles.launcher} onClick={() => { setOpen(true) }}>
-      <img src={LOGO} alt="" className={styles.launcherLogo} />
-      <span>工作流</span>
-    </button>
+    <>
+      <LiveRunPanel />
+      {open ? (
+        <Workbench send={props.send} onClose={() => { setOpen(false) }} />
+      ) : (
+        <button type="button" className={styles.launcher} onClick={() => { setOpen(true) }}>
+          <img src={LOGO} alt="" className={styles.launcherLogo} />
+          <span>工作流</span>
+        </button>
+      )}
+    </>
   )
 }

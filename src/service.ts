@@ -32,6 +32,7 @@ import type { AgentDefinition, StepVerdict, WorkflowConfig } from './dsl/types.j
 import { extractVerdict, normalizeVerdict } from './dsl/verdict.js'
 import { buildStepPrompt, buildSupervisorPrompt, SUMMARY_BUDGET, truncate } from './engine/prompts.js'
 import { runPreCommands } from './engine/pre-commands.js'
+import { foldAssistantText, type StreamEventLike } from './engine/stream-fold.js'
 import { createRunState, runStateMachine } from './engine/runner.js'
 import { EngineError, type EngineRunOptions, type RunResult, type RunState, type StepExecutor } from './engine/types.js'
 import { captureGitSnapshot, saveGitSnapshot } from './store/git-baseline.js'
@@ -197,6 +198,34 @@ export interface AceRunHandle {
 /** How a run executes: awaited by the caller or detached as a DSH job. */
 export type RunMode = 'foreground' | 'job'
 
+/** Live streaming projection of one run, polled by the web panel. */
+export interface RunStreamSnapshot {
+  runId: string
+  workflowName: string
+  status: string
+  currentState: string
+  currentStep: string | null
+  agent: string | null
+  role: string | null
+  text: string
+  seq: number
+  completedSteps: number
+  totalSteps: number
+  states: { name: string; isInitial: boolean; isFinal: boolean; position: { x: number; y: number } | null }[]
+  transitions: { from: string; to: string; verdict: string | null; label: string | null }[]
+  verdicts: { state: string; verdict: string }[]
+}
+
+/** Live streaming state for one run, updated by the step executor. */
+interface RunStreamState extends RunStreamSnapshot {
+  /** Child session being folded; null when no step is executing. */
+  childSessionId: string | null
+  /** Next event index for the transcript fold. */
+  foldIndex: number
+  /** Prune timer after settlement. */
+  pruneTimer?: ReturnType<typeof setTimeout>
+}
+
 /** Extract plain text from LLM content blocks. */
 function toText(blocks: ContentBlock[]): string {
   return blocks
@@ -211,6 +240,7 @@ export default class AceHarnessService extends Service {
   private templates: BuiltinWorkflowTemplate[] = []
   private readonly catalogReady: Promise<void>
   private readonly active = new Map<string, AbortController>()
+  private readonly streams = new Map<string, RunStreamState>()
 
   constructor(ctx: Context, config: AceHarnessConfig = {}) {
     super(ctx, 'ace-harness')
@@ -347,6 +377,38 @@ export default class AceHarnessService extends Service {
       parentSessionId: input.parent.session.id,
     })
 
+    // Live streaming projection for the web panel.
+    this.streams.set(runId, {
+      runId,
+      workflowName: input.workflow.config.workflow.name,
+      status: 'preparing',
+      currentState: '',
+      currentStep: null,
+      agent: null,
+      role: null,
+      text: '',
+      seq: 0,
+      completedSteps: 0,
+      totalSteps: state.totalSteps,
+      states: input.workflow.config.workflow.states.map((machineState) => ({
+        name: machineState.name,
+        isInitial: machineState.isInitial,
+        isFinal: machineState.isFinal,
+        position: machineState.position ?? null,
+      })),
+      transitions: input.workflow.config.workflow.states.flatMap((machineState) =>
+        machineState.transitions.map((transition) => ({
+          from: machineState.name,
+          to: transition.to,
+          verdict: transition.condition.verdict ?? null,
+          label: transition.label ?? null,
+        })),
+      ),
+      verdicts: [],
+      childSessionId: null,
+      foldIndex: 0,
+    })
+
     const executor = this.makeExecutor(workspace, input.parent, runId, 1)
     const options = this.engineOptions(
       workspace,
@@ -432,6 +494,18 @@ export default class AceHarnessService extends Service {
       runStateMachine(options)
         .then(async (runResult) => {
           this.ctx.emit('ace/workflow-end', { runId, status: runResult.status })
+          const stream = this.streams.get(runId)
+          if (stream) {
+            stream.status = runResult.status
+            stream.currentStep = null
+            stream.agent = null
+            stream.role = null
+            stream.seq += 1
+            stream.pruneTimer = setTimeout(() => {
+              this.streams.delete(runId)
+            }, 10 * 60_000)
+            stream.pruneTimer.unref?.()
+          }
           await appendAudit(workspace, runId, this.config.runDirName, {
             at: new Date().toISOString(),
             event: 'end',
@@ -505,6 +579,28 @@ export default class AceHarnessService extends Service {
     return loadRunState(workspace, runId, this.config.runDirName)
   }
 
+  /** Live streaming snapshot of a run, or undefined when unknown or pruned. */
+  streamSnapshot(runId: string): RunStreamSnapshot | undefined {
+    const entry = this.streams.get(runId)
+    if (!entry) return undefined
+    return {
+      runId: entry.runId,
+      workflowName: entry.workflowName,
+      status: entry.status,
+      currentState: entry.currentState,
+      currentStep: entry.currentStep,
+      agent: entry.agent,
+      role: entry.role,
+      text: entry.text,
+      seq: entry.seq,
+      completedSteps: entry.completedSteps,
+      totalSteps: entry.totalSteps,
+      states: entry.states,
+      transitions: entry.transitions,
+      verdicts: entry.verdicts,
+    }
+  }
+
   /**
    * Run a workflow through the HTTP API with a synthetic parent bound to the
    * given workspace. Script-only workflows run fully without credentials;
@@ -560,6 +656,18 @@ export default class AceHarnessService extends Service {
   ): EngineRunOptions {
     const persist = async (runState: RunState): Promise<void> => {
       await saveRunState(workspace, runState, this.config.runDirName)
+      const stream = this.streams.get(runId)
+      if (stream) {
+        stream.status = runState.status
+        stream.currentState = runState.currentState ?? ''
+        stream.completedSteps = runState.completedSteps
+        stream.totalSteps = runState.totalSteps
+        stream.verdicts = runState.stateOutcomes.map((outcome) => ({
+          state: outcome.state,
+          verdict: outcome.verdict.verdict,
+        }))
+        stream.seq += 1
+      }
       this.ctx.emit('ace/run-updated', {
         runId: runState.id,
         status: runState.status,
@@ -647,6 +755,17 @@ export default class AceHarnessService extends Service {
         const providerCaps = service.ctx.subagents.getProvider(provider)?.capabilities
         const wantsSchema = input.role === 'judge' && providerCaps?.outputSchema === true
         const stepSignal = stepSignalWithTimeout(input.signal, service.config.stepTimeoutMs)
+        const stream = service.streams.get(parentRunId)
+        if (stream) {
+          stream.currentState = input.ctx.state
+          stream.currentStep = input.stepName
+          stream.agent = input.agentName
+          stream.role = input.role
+          stream.text = ''
+          stream.childSessionId = null
+          stream.foldIndex = 0
+          stream.seq += 1
+        }
         const request: SubagentStartRequest = {
           label: `${input.ctx.state}/${input.stepName}`,
           prompt: [{ type: 'text', text: promptText }],
@@ -666,8 +785,29 @@ export default class AceHarnessService extends Service {
           role: input.role,
         })
         let run: Awaited<ReturnType<typeof service.ctx.subagents.start>> | undefined
+        let poller: ReturnType<typeof setInterval> | undefined
         try {
           run = await service.ctx.subagents.start(provider, request)
+          if (stream) {
+            const childId = run.id
+            stream.childSessionId = childId
+            // Fold the child transcript into the live stream while it runs.
+            poller = setInterval(() => {
+              const entry = service.streams.get(parentRunId)
+              if (!entry || entry.childSessionId !== childId) return
+              const session = service.ctx.sessions.get(childId)
+              if (!session) return
+              const fold = foldAssistantText(
+                session.events as readonly StreamEventLike[],
+                entry.foldIndex,
+              )
+              entry.foldIndex = fold.index
+              if (fold.text !== '') {
+                entry.text += fold.text
+                entry.seq += 1
+              }
+            }, 800)
+          }
           const childResult = await run.result
           if (stepSignal.timedOut()) {
             throw new Error(`步骤「${input.stepName}」执行超时（${service.config.stepTimeoutMs}ms）`)
@@ -677,6 +817,15 @@ export default class AceHarnessService extends Service {
             childResult.structured !== undefined
               ? normalizeVerdict(childResult.structured) ?? extractVerdict(outputText)
               : extractVerdict(outputText)
+          const finalText = truncate(outputText || '(该步骤没有文本输出)', SUMMARY_BUDGET)
+          if (stream) {
+            stream.text = finalText
+            stream.currentStep = null
+            stream.agent = null
+            stream.role = null
+            stream.childSessionId = null
+            stream.seq += 1
+          }
           service.ctx.emit('ace/step-end', {
             runId: parentRunId,
             state: input.ctx.state,
@@ -684,10 +833,11 @@ export default class AceHarnessService extends Service {
             verdict: verdict?.verdict,
           })
           return {
-            outputSummary: truncate(outputText || '(该步骤没有文本输出)', SUMMARY_BUDGET),
+            outputSummary: finalText,
             verdict,
           }
         } finally {
+          if (poller !== undefined) clearInterval(poller)
           stepSignal.dispose()
           run?.dispose()
         }

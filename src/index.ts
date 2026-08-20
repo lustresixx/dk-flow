@@ -387,6 +387,35 @@ export function apply(ctx: Context, config: Config): void {
       },
     }), 'ace-harness: run route')
 
+    // Live streaming projection of one run, polled by the web panel.
+    ctx.effect(() => webServer.register({
+      kind: 'exact',
+      path: '/plugins/dsh-ace-harness/stream',
+      handler: async (req, res) => {
+        try {
+          const url = new URL(req.url ?? '/', 'http://x')
+          const runId = url.searchParams.get('runId')
+          if (!runId) {
+            res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end('缺少 runId')
+            return
+          }
+          const snapshot = aceHarness.streamSnapshot(runId)
+          if (!snapshot) {
+            res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end('未找到该运行的实时流（可能已结束并被清理）')
+            return
+          }
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+          res.end(JSON.stringify(snapshot))
+        } catch (error) {
+          ctx.logger('ace-harness').warn(`stream route failed: ${String(error)}`)
+          res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' })
+          res.end(String(error))
+        }
+      },
+    }), 'ace-harness: stream route')
+
     // Packaged artwork: the ACE logo and favicon, served through an explicit
     // allowlist (no path traversal).
     const assetsDir = assetsRoot()

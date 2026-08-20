@@ -78,3 +78,21 @@ export interface AceStateDto {
   templates: StateTemplateDto[]
   workspaces: StateWorkspaceDto[]
 }
+
+/** Live streaming projection of one run (GET /plugins/dsh-ace-harness/stream). */
+export interface StreamSnapshotDto {
+  runId: string
+  workflowName: string
+  status: string
+  currentState: string
+  currentStep: string | null
+  agent: string | null
+  role: string | null
+  text: string
+  seq: number
+  completedSteps: number
+  totalSteps: number
+  states: { name: string; isInitial: boolean; isFinal: boolean; position: { x: number; y: number } | null }[]
+  transitions: { from: string; to: string; verdict: string | null; label: string | null }[]
+  verdicts: { state: string; verdict: string }[]
+}

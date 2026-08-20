@@ -3,6 +3,7 @@
 把 ACEHarness 的工作流核心移植成 DeepSeek Harness 插件：**可视化编排的状态机工作流** + **AI/脚本双节点** + **成功/失败二元流转（由 AI 判断）** + **对抗式多 Agent 评审**。
 
 - 全屏「工作流工作台」后台页面：模板 / 工作流 / 运行记录三栏，React Flow 画布拖拽节点与连线
+- **实时运行侧边栏**：工作流运行时自动在右侧弹出——状态机迷你流转图（完成状态按成功/失败着色、当前状态脉冲高亮）+ 当前步骤角色 + **子代理输出流式滚动**（`GET /plugins/dsh-ace-harness/stream` 实时投影）
 - 节点三种类型：**AI 步骤**（专属角色 Agent）、**脚本步骤**（node:vm 执行 JS）、**子工作流**
 - 流转只分**成功 / 失败**，由 AI 依据实际产出判断；保留旧 pass/conditional_pass YAML 兼容
 - 内置 13 个角色 Agent（supervisor / defender / attacker / judge 四队）+ 5 个模板（通用红蓝评审、缺陷定位修复、软件交付、简单脚本流水线、**代码优化评审**）
@@ -141,6 +142,9 @@ curl -X POST http://127.0.0.1:4090/plugins/dsh-ace-harness/instantiate \
 curl -X POST http://127.0.0.1:4090/plugins/dsh-ace-harness/run \
   -H "content-type: application/json" \
   -d '{"workspace":"E:\\Code\\typeScript\\deepseek-harness","workflow":"simple-script-pipeline","values":{"requirements":"hello api test"}}'
+
+# 实时流式投影（GET，含状态机流转图数据、当前步骤与子代理输出文本）
+curl "http://127.0.0.1:4090/plugins/dsh-ace-harness/stream?runId=<runId>"
 ```
 
 响应示例：`{"runId":"run-...","status":"completed","verdict":"success","states":[{"state":"输入检查","verdict":"success","steps":[{"step":"检查输入","type":"script","verdict":"success","outputSummary":"输入检查通过：hello api test"}]},...]}`
