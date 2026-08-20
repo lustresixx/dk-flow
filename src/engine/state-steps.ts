@@ -322,12 +322,18 @@ export async function executeStateSteps(
   for (const segment of segments) {
     const segmentStepNames = new Set(segment.steps)
     const segmentWorkflowSteps = steps.filter((step) => segmentStepNames.has(step.name))
+    // Evidence semantics are deterministic (P1-2③): every step of a segment
+    // — parallel group or not — sees the completed steps as of SEGMENT
+    // START. (De-facto true before, since evidence was read synchronously
+    // at each step's invocation; pinning it explicitly makes the rule
+    // immune to refactors that interleave an await before the read.)
+    const evidenceSnapshot = [...completedSteps]
     const runOne = async (step: WorkflowStep): Promise<StepOutcome> => {
       const key = stepKey(machineState.name, step.name)
       if (completedKeys.has(key)) {
         return completedSteps.find((item) => item.key === key)!
       }
-      const outcome = await executeStateStep({ options, machineState, step, run, completedSteps })
+      const outcome = await executeStateStep({ options, machineState, step, run, completedSteps: evidenceSnapshot })
       completedSteps.push(outcome)
       await hooks.onStepFinished?.(completedSteps)
       return outcome

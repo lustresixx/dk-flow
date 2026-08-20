@@ -117,10 +117,23 @@ export class RunPersistence {
     }
   }
 
-  /** Build the engine persist callback of one run. */
+  /**
+   * Build the engine persist callback of one run. Persists of one run are
+   * serialized on a promise chain (P1-2③): parallel segment steps finish
+   * together and would otherwise interleave the pipeline (the state.json
+   * write is atomic, but the audit diff cursor and the stream projection
+   * would observe snapshots in completion order rather than call order).
+   * A failed persist rejects its own caller but does not stall the chain.
+   */
   makePersist(workspace: string, runId: string): (runState: RunState) => Promise<void> {
-    return async (runState: RunState): Promise<void> => {
-      await this.persistSnapshot(workspace, runId, runState)
+    let chain: Promise<void> = Promise.resolve()
+    return (runState: RunState): Promise<void> => {
+      const next = chain.then(() => this.persistSnapshot(workspace, runId, runState))
+      chain = next.catch(() => {
+        // Keep the chain alive for later persists; the failure already
+        // rejected the caller above.
+      })
+      return next
     }
   }
 
