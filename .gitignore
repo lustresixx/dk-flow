@@ -5,3 +5,5 @@ coverage/
 .vitest/
 .ace-workflows/
 .dsh/
+
+.test-build/
