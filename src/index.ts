@@ -238,7 +238,18 @@ export function apply(ctx: Context, config: Config): void {
       path: '/plugins/dsh-ace-harness/workflows',
       handler: async (req, res) => {
         const url = new URL(req.url ?? '/', 'http://x')
-        const relative = decodeURIComponent(url.pathname.slice('/plugins/dsh-ace-harness/workflows'.length)).replace(/^\/+/, '')
+        let rawName: string
+        try {
+          rawName = decodeURIComponent(url.pathname.slice('/plugins/dsh-ace-harness/workflows'.length)).replace(/^\/+/, '')
+        } catch {
+          res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+          res.end('workflow 文件名非法')
+          return
+        }
+        // The state route reports extension-less names; accept both forms and
+        // normalize to the canonical `<name>.yaml`.
+        const base = rawName.endsWith('.yaml') ? rawName.slice(0, -'.yaml'.length) : rawName
+        const relative = `${base}.yaml`
         try {
           const workspacePath = url.searchParams.get('workspace')
           const known = workspaceRegistry.list().map((workspace) => workspace.path)
@@ -247,12 +258,12 @@ export function apply(ctx: Context, config: Config): void {
             res.end('workspace 不在已知工作区列表中')
             return
           }
-          if (req.method === 'GET' && relative !== '') {
-            if (!/^[A-Za-z0-9_-]+\.yaml$/.test(relative)) {
-              res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
-              res.end('workflow 文件名非法')
-              return
-            }
+          if (relative !== '.yaml' && !/^[A-Za-z0-9_-]+\.yaml$/.test(relative)) {
+            res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end('workflow 文件名非法')
+            return
+          }
+          if (req.method === 'GET') {
             const loaded = await aceHarness.loadWorkflowConfig(workspacePath, relative)
             if (!loaded) {
               res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
@@ -265,12 +276,7 @@ export function apply(ctx: Context, config: Config): void {
             res.end(yaml)
             return
           }
-          if (req.method === 'POST' && relative !== '') {
-            if (!/^[A-Za-z0-9_-]+\.yaml$/.test(relative)) {
-              res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
-              res.end('workflow 文件名非法')
-              return
-            }
+          if (req.method === 'POST') {
             const body = await readRequestBody(req, 1_000_000)
             const saved = await aceHarness.saveWorkflowConfig(workspacePath, relative, body)
             res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
