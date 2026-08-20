@@ -483,7 +483,7 @@ function StateInspector(props: {
               task: '',
               type: 'agent',
               workflowRef: '',
-              script: '// context.requirements 为运行输入，context.priorStepEvidence 为前序产出\nreturn { output: "完成", success: true }',
+              script: '// context.requirements 为运行输入，context.priorStepEvidence 为前序产出，context.stepData 为上游结构化数据\n// 必须返回 { output: "...", success: true/false }，可选附带 data（任意 JSON）\nreturn { output: "完成", success: true }',
               model: '',
               parallelGroup: '',
             },
@@ -579,7 +579,7 @@ function StepEditor(props: {
           rows={7}
           className={styles.scriptArea}
           spellCheck={false}
-          placeholder={'// JavaScript：可用 context.requirements / context.inputs / context.priorStepEvidence\nreturn { output: "结果文本", success: true }'}
+          placeholder={'// JavaScript：可用 context.requirements / context.inputs / context.priorStepEvidence / context.stepData\n// 必须返回 { output: "结果文本", success: true }，可选附带 data（任意 JSON）传给下游\nreturn { output: "结果文本", success: true }'}
           value={draft.script}
           onChange={(event) => { set({ script: event.target.value }) }}
         />

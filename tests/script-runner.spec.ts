@@ -7,6 +7,7 @@ const input = {
   priorStepEvidence: '前序产出',
   priorStateEvidence: '前序状态产出',
   inputs: { a: '1' },
+  stepData: { '上游/计算': { count: 2 } },
 }
 
 describe('runScriptNode', () => {
@@ -22,10 +23,28 @@ describe('runScriptNode', () => {
     expect(failed.output).toContain('输入不合法')
   })
 
-  it('stringifies bare return values with success', () => {
+  it('rejects bare return values with a contract diagnostic', () => {
     const result = runScriptNode('return context.requirements.toUpperCase()', input)
-    expect(result.success).toBe(true)
-    expect(result.output).toBe('HELLO WORLD')
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('必须返回对象')
+  })
+
+  it('rejects a missing output field', () => {
+    const result = runScriptNode('return { success: true }', input)
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('output')
+  })
+
+  it('rejects a non-boolean success field', () => {
+    const result = runScriptNode('return { output: "x", success: "yes" }', input)
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('success')
+  })
+
+  it('rejects array returns', () => {
+    const result = runScriptNode('return [1, 2]', input)
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('必须返回对象')
   })
 
   it('captures thrown errors as failures', () => {
@@ -40,6 +59,38 @@ describe('runScriptNode', () => {
     expect(result.success).toBe(true)
     expect(result.output).toContain('1')
     expect(result.output).toContain('log line')
+  })
+
+  it('exposes upstream stepData and carries a data payload through', () => {
+    const result = runScriptNode(
+      'return { output: "n=" + context.stepData["上游/计算"].count, success: true, data: { n: context.stepData["上游/计算"].count } }',
+      input,
+    )
+    expect(result.success).toBe(true)
+    expect(result.output).toBe('n=2')
+    expect(result.data).toEqual({ n: 2 })
+  })
+
+  it('rejects data that is not JSON-serializable', () => {
+    const result = runScriptNode('return { output: "x", success: true, data: 10n }', input)
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('data 不合法')
+  })
+
+  it('rejects data above the 64KB budget', () => {
+    const result = runScriptNode(
+      'return { output: "x", success: true, data: "a".repeat(70000) }',
+      input,
+    )
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('KB 上限')
+  })
+
+  it('freezes context so scripts cannot mutate it', () => {
+    const result = runScriptNode('context.requirements = "篡改"; return { output: "x", success: true }', input)
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('read only')
+    expect(input.requirements).toBe('hello world')
   })
 
   it('handles heavy finite scripts (vm timeout is best-effort only)', () => {

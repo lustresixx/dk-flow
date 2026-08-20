@@ -278,6 +278,7 @@ describe('runStateMachine', () => {
       key,
       state: '方案',
       step: '方案设计',
+      type: 'agent',
       agent: 'architect',
       role: 'defender',
       outputSummary: '已完成',
@@ -797,5 +798,72 @@ describe('runStateMachine', () => {
     const result = await runStateMachine(options)
     expect(result.status).toBe('completed')
     expect(maxConcurrent).toBeGreaterThanOrEqual(2)
+  })
+
+  it('carries script data to downstream scripts and AI steps', async () => {
+    const config: WorkflowConfig = {
+      workflow: {
+        name: '数据流转',
+        mode: 'state-machine',
+        maxTransitions: 10,
+        states: [
+          {
+            name: '计算',
+            steps: [
+              { name: '产出', type: 'script', script: 'return { output: "算好了", success: true, data: { answer: 42 } }' },
+            ],
+            transitions: [{ to: '消费', condition: { verdict: 'success' }, priority: 10 }],
+            isInitial: true,
+            isFinal: false,
+          },
+          {
+            name: '消费',
+            steps: [
+              { name: '脚本消费', type: 'script', script: 'const d = context.stepData["计算/产出"]; return { output: "answer=" + d.answer, success: true }' },
+              { name: 'AI消费', agent: 'architect', role: 'defender', task: '汇总' },
+            ],
+            transitions: [],
+            isInitial: false,
+            isFinal: true,
+          },
+        ],
+      },
+    }
+    const captured: Record<string, unknown>[] = []
+    const executor: StepExecutor = {
+      async runAgentStep(input) {
+        captured.push(input.ctx.stepData)
+        return { outputSummary: 'ok', verdict: V('pass') }
+      },
+      async runLlmStep(input) {
+        captured.push(input.ctx.stepData)
+        return { outputSummary: 'ok', verdict: V('pass') }
+      },
+      async runSubworkflowStep() {
+        return { outcome: 'completed', verdict: V('pass') }
+      },
+    }
+    const options: EngineRunOptions = {
+      config,
+      runId: 'run-data',
+      configFile: 'data.yaml',
+      inputs: {},
+      parent: fakeParent,
+      signal: new AbortController().signal,
+      executor,
+      persist: async () => {},
+      load: async () => null,
+      resolveSubworkflow: async () => config,
+      askHumanTransition: async ({ candidates }) => candidates[0] ?? '',
+    }
+    const result = await runStateMachine(options)
+    expect(result.status).toBe('completed')
+    const producer = result.stateOutcomes.find((outcome) => outcome.state === '计算')!
+    expect(producer.steps[0]!.data).toEqual({ answer: 42 })
+    const consumer = result.stateOutcomes.find((outcome) => outcome.state === '消费')!
+    const scriptStep = consumer.steps.find((step) => step.step === '脚本消费')!
+    expect(scriptStep.outputSummary).toBe('answer=42')
+    // The AI step received the structured payload under its `<state>/<step>` key.
+    expect(captured[0]!['计算/产出']).toEqual({ answer: 42 })
   })
 })

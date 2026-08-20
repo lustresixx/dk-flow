@@ -54,7 +54,15 @@ export interface StateRunDto {
     verdict: string
     supervisorScore: number | null
     supervisorNote: string | null
-    steps: { step: string; agent: string | null; role: string | null; verdict: string | null; outputSummary: string }[]
+    steps: {
+      step: string
+      type: 'agent' | 'script' | 'subworkflow' | 'llm'
+      agent: string | null
+      role: string | null
+      verdict: string | null
+      outputSummary: string
+      data: unknown | null
+    }[]
   }[]
 }
 
@@ -102,6 +110,7 @@ export interface StreamSnapshotDto {
     key: string
     state: string
     step: string
+    type: 'agent' | 'script' | 'subworkflow' | 'llm'
     agent: string | null
     role: string | null
     text: string

@@ -30,6 +30,13 @@ const VERDICT_TEXT: Record<string, string> = {
   conditional_pass: '有条件通过',
 }
 
+const STEP_TEXT: Record<string, string> = {
+  agent: 'AI',
+  script: '脚本',
+  subworkflow: '子工作流',
+  llm: '快速LLM',
+}
+
 interface EditorState {
   yaml: string
   workspacePath: string
@@ -294,7 +301,7 @@ function TemplateDetail(props: {
               {stateItem.isInitial ? '▶ ' : ''}{stateItem.name}{stateItem.isFinal ? ' ■' : ''}
             </span>
             <span className={styles.stateSteps}>
-              {stateItem.steps.map((step) => `${step.name}${step.agent ? `(${step.agent})` : '(脚本)'}`).join(' → ')}
+              {stateItem.steps.map((step) => `${step.name}(${step.agent ? step.agent : STEP_TEXT[step.type ?? 'agent']})`).join(' → ')}
             </span>
           </li>
         ))}
@@ -443,7 +450,11 @@ function RunDetail(props: {
               {stateItem.steps.map((step) => (
                 <li key={step.step} className={styles.stepItem}>
                   <span className={styles.stepName}>{step.step}</span>
-                  {step.agent ? <span className={styles.stepAgent}>{step.agent}</span> : <span className={styles.stepAgent}>脚本</span>}
+                  {step.type === 'agent' && step.agent ? (
+                    <span className={styles.stepAgent}>{step.agent}</span>
+                  ) : (
+                    <span className={styles.stepAgent}>{STEP_TEXT[step.type] ?? step.type}</span>
+                  )}
                   {step.role ? <span className={styles.stepRole}>{step.role}</span> : null}
                   {step.verdict ? (
                     <span className={styles.verdictBadge} data-verdict={step.verdict}>
@@ -452,6 +463,9 @@ function RunDetail(props: {
                   ) : null}
                   {step.outputSummary ? (
                     <pre className={styles.stepOutput}>{step.outputSummary.slice(0, 300)}</pre>
+                  ) : null}
+                  {step.data != null ? (
+                    <pre className={styles.stepOutput}>{JSON.stringify(step.data, null, 2).slice(0, 300)}</pre>
                   ) : null}
                 </li>
               ))}

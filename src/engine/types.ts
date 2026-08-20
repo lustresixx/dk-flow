@@ -4,7 +4,7 @@
  * @module dsh-ace-harness/engine
  */
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { StepVerdict, Verdict, WorkflowConfig } from '../dsl/types.js'
+import type { StepType, StepVerdict, Verdict, WorkflowConfig } from '../dsl/types.js'
 
 /** Outcome of one executed step. */
 export interface StepOutcome {
@@ -12,6 +12,8 @@ export interface StepOutcome {
   key: string
   state: string
   step: string
+  /** Step kind as declared in the workflow (`agent` when omitted). */
+  type: StepType
   agent?: string
   role?: 'attacker' | 'defender' | 'judge' | 'neutral'
   /** Final assistant text (bounded copy kept for context handoff). */
@@ -20,6 +22,8 @@ export interface StepOutcome {
   verdict?: StepVerdict
   /** Subworkflow terminal outcome when the step is a subworkflow. */
   subworkflowOutcome?: 'completed' | 'failed' | 'stopped' | 'crashed'
+  /** Optional structured payload (script steps only); rides to downstream steps. */
+  data?: unknown
   startedAt: string
   finishedAt: string
 }
@@ -92,6 +96,8 @@ export interface StepContext {
   priorStateEvidence: string
   /** Evidence from previous steps of the current state. */
   priorStepEvidence: string
+  /** Structured payloads from completed steps, keyed `<state>/<step>`. */
+  stepData: Record<string, unknown>
 }
 
 /**

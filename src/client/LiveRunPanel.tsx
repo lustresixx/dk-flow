@@ -35,6 +35,13 @@ const STATUS_TEXT: Record<string, string> = {
 
 const ACTIVE_STATUSES = new Set(['preparing', 'running', 'waiting-human'])
 
+const STEP_KIND_TEXT: Record<string, string> = {
+  agent: 'AI',
+  script: '脚本',
+  subworkflow: '子工作流',
+  llm: '快速LLM',
+}
+
 const EDGE_COLORS: Record<string, string> = {
   success: '#34d399',
   pass: '#34d399',
@@ -227,7 +234,7 @@ export function LiveRunPanel(props: LiveRunPanelProps): JSX.Element | null {
                 <div key={entry.key} className={styles.stepLogItem} data-finished={entry.finished ? 'true' : 'false'}>
                   <div className={styles.stepLogHead}>
                     <span className={styles.stepLogName}>{entry.step}</span>
-                    {entry.agent ? <span className={styles.stepLogAgent}>{entry.agent}</span> : null}
+                    {entry.agent ? <span className={styles.stepLogAgent}>{entry.agent}</span> : <span className={styles.stepLogAgent}>{STEP_KIND_TEXT[entry.type] ?? entry.type}</span>}
                     {entry.role && entry.role !== 'neutral' ? <span className={styles.stepLogRole}>{entry.role}</span> : null}
                     {entry.finished ? <span className={styles.stepLogDone}>完成</span> : <span className={styles.stepLogLive}>输出中…</span>}
                   </div>

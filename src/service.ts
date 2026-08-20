@@ -221,6 +221,7 @@ export interface RunStreamSnapshot {
     key: string
     state: string
     step: string
+    type: 'agent' | 'script' | 'subworkflow' | 'llm'
     agent: string | null
     role: string | null
     text: string
@@ -694,7 +695,7 @@ export default class AceHarnessService extends Service {
           }
         })
         // Derive the step log from the persisted progress so every step kind
-        // (agent, script, subworkflow) appears; the in-flight agent step keeps
+        // (agent, llm, script, subworkflow) appears; the in-flight agent step keeps
         // its live text until the persist after its completion finalizes it.
         const byKey = new Map<string, number>()
         stream.stepLog.forEach((entry, index) => {
@@ -711,6 +712,7 @@ export default class AceHarnessService extends Service {
               key: step.key,
               state: step.state,
               step: step.step,
+              type: step.type,
               agent: step.agent ?? null,
               role: step.role ?? null,
               text: step.outputSummary,
@@ -827,6 +829,7 @@ export default class AceHarnessService extends Service {
             key: `${input.ctx.state}/${input.stepName}`,
             state: input.ctx.state,
             step: input.stepName,
+            type: 'agent',
             agent: input.agentName,
             role: input.role,
             text: '',
@@ -962,6 +965,7 @@ export default class AceHarnessService extends Service {
             key: `${input.ctx.state}/${input.stepName}`,
             state: input.ctx.state,
             step: input.stepName,
+            type: 'llm',
             agent: input.agentName ?? null,
             role: input.role,
             text: '',

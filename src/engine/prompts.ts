@@ -12,6 +12,8 @@ export const CONCLUSION_BUDGET = 2000
 export const SUMMARY_BUDGET = 8000
 /** Maximum chars of all prior-state evidence handed to one step. */
 export const STATE_EVIDENCE_BUDGET = 32000
+/** Maximum chars of structured upstream data rendered into an AI prompt. */
+export const STRUCTURED_DATA_BUDGET = 4000
 
 /** Truncate to a budget on a character boundary with an ellipsis marker. */
 export function truncate(text: string, budget: number): string {
@@ -71,6 +73,17 @@ const STEP_OUTPUT_INSTRUCTION = [
 ]
 
 /**
+ * Render upstream structured data as a bounded JSON section for an AI step.
+ * Scripts receive the same payloads as objects via `context.stepData`; agents
+ * and llm steps see this text section instead.
+ */
+export function renderStructuredData(stepData: Record<string, unknown>): string {
+  const keys = Object.keys(stepData)
+  if (keys.length === 0) return ''
+  return `## 上游结构化数据（JSON）\n${truncate(JSON.stringify(stepData), STRUCTURED_DATA_BUDGET)}`
+}
+
+/**
  * Build the user prompt delivered to one step's subagent.
  */
 export function buildStepPrompt(input: {
@@ -89,6 +102,7 @@ export function buildStepPrompt(input: {
     input.ctx.priorStepEvidence !== '（无本状态前置步骤产出）'
       ? `## 本状态前置步骤证据\n${input.ctx.priorStepEvidence}`
       : '',
+    renderStructuredData(input.ctx.stepData),
     input.evidence ? `## 待评审证据（只读）\n${input.evidence}` : '',
     `## 本步骤任务\n${input.task}`,
     input.constraints.length > 0 ? `## 约束\n${input.constraints.map((item) => `- ${item}`).join('\n')}` : '',

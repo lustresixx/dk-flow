@@ -4,9 +4,9 @@
 
 - 全屏「工作流工作台」后台页面：模板 / 工作流 / 运行记录三栏，React Flow 画布拖拽节点与连线
 - **实时运行侧边栏**：工作流运行时自动在右侧弹出——状态机迷你流转图（完成状态按成功/失败着色、当前状态脉冲高亮）+ 当前步骤角色 + **子代理输出流式滚动**（`GET /plugins/dsh-ace-harness/stream` 实时投影）
-- 节点三种类型：**AI 步骤**（专属角色 Agent）、**脚本步骤**（node:vm 执行 JS）、**子工作流**
+- 节点四种类型：**AI 步骤**（专属角色 Agent）、**快速 LLM**（单轮直调，无子代理）、**脚本步骤**（node:vm 执行 JS）、**子工作流**
 - 流转只分**成功 / 失败**，由 AI 依据实际产出判断；保留旧 pass/conditional_pass YAML 兼容
-- 内置 13 个角色 Agent（supervisor / defender / attacker / judge 四队）+ 6 个模板（通用红蓝评审、缺陷定位修复、软件交付、简单脚本流水线、**代码优化评审**、**混合流水线（脚本⇄AI）**）
+- 内置 13 个角色 Agent（supervisor / defender / attacker / judge 四队）+ 7 个模板（通用红蓝评审、缺陷定位修复、软件交付、简单脚本流水线、**代码优化评审**、**混合流水线（脚本⇄AI）**、**快速 LLM 问答**）
 - **按风险自适应监督**：`supervisor.checkpointPolicy: risks`（默认）只在失败/标记/人工门状态跑检查点，成功直行跳过额外调用；`all` 恢复逐状态检查
 - `/workflow` 斜杠命令 + `workflow_list` / `run_workflow` / `workflow_manage` 模型工具
 - 治理：运行持久化、断点恢复、人工决策点、supervisor 评分与经验沉淀、Git baseline、后台 job
@@ -60,7 +60,7 @@ dsh --profile web --dump-config
 |---|---|
 | AI 步骤 | 选择角色 Agent（defender/attacker/judge 或 13 个内置角色），启动 DSH 子代理执行任务，可按 Agent 配置挂载工具；judge 步骤结构化输出 verdict |
 | 快速 LLM | 一次直接的单轮模型调用（不启动子代理、不带工具），适合快速判断 / 分类 / 摘要；`agent` 可选（填写则复用其角色设定作为 system prompt），`model` 可选（缺省用调用方默认模型） |
-| 脚本步骤 | 内联 JavaScript（node:vm 沙箱、10s 超时）；可用 `context.requirements` / `context.inputs` / `context.priorStateEvidence` / `context.priorStepEvidence`；返回 `{ output, success }`、`{ error }` 或裸值 |
+| 脚本步骤 | 内联 JavaScript（node:vm 沙箱、10s 超时、`"use strict"`、只读冻结的 `context`）；可用 `context.requirements` / `context.inputs` / `context.priorStateEvidence` / `context.priorStepEvidence` / `context.stepData`（上游结构化数据，按 `状态/步骤` 键取值）；**必须返回 `{ output: "...", success: true/false }`**（或 `{ error }` 表示失败），可附带 `data`（任意 JSON，≤64KB）传给下游脚本与 AI 提示词；违反契约直接判 fail 并给出诊断 |
 | 子工作流 | 引用另一个工作流配置（文件名/模板 id），独立 runId，结果映射回 verdict |
 
 ### 成功/失败流转

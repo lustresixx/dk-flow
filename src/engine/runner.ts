@@ -312,6 +312,7 @@ async function executeState(
     projectRoot: runState.context.projectRoot,
     priorStateEvidence: buildStateEvidence(runState.stateOutcomes),
     priorStepEvidence: buildStepEvidence(completedSteps),
+    stepData: buildStepData(runState.stateOutcomes, completedSteps),
   }
 
   const segments = segmentSteps(steps)
@@ -332,11 +333,13 @@ async function executeState(
           priorStepEvidence: buildStepEvidence(completedSteps),
           priorStateEvidence: buildStateEvidence(runState.stateOutcomes),
           inputs: runState.inputs,
+          stepData: buildStepData(runState.stateOutcomes, completedSteps),
         })
         outcome = {
           key,
           state: machineState.name,
           step: step.name,
+          type: 'script',
           role: 'neutral',
           outputSummary: scriptResult.output,
           verdict: {
@@ -346,6 +349,7 @@ async function executeState(
             // the evidence, so it flows into state-level evidence verbatim.
             rationale: scriptResult.error ?? truncate(scriptResult.output, CONCLUSION_BUDGET),
           },
+          ...(scriptResult.data !== undefined ? { data: scriptResult.data } : {}),
           startedAt: now(),
           finishedAt: now(),
         }
@@ -353,6 +357,7 @@ async function executeState(
         const stepContext = {
           ...context,
           priorStepEvidence: buildStepEvidence(completedSteps),
+          stepData: buildStepData(runState.stateOutcomes, completedSteps),
         }
         const result = await executor.runLlmStep({
           stepName: step.name,
@@ -369,6 +374,7 @@ async function executeState(
           key,
           state: machineState.name,
           step: step.name,
+          type: 'llm',
           agent: step.agent,
           role,
           outputSummary: result.outputSummary,
@@ -390,6 +396,7 @@ async function executeState(
           key,
           state: machineState.name,
           step: step.name,
+          type: 'subworkflow',
           agent: step.agent,
           role,
           outputSummary: child.verdict?.rationale ?? `子工作流结束：${child.outcome}`,
@@ -403,6 +410,7 @@ async function executeState(
         const stepContext = {
           ...context,
           priorStepEvidence: buildStepEvidence(completedSteps),
+          stepData: buildStepData(runState.stateOutcomes, completedSteps),
         }
         const evidence =
           role === 'attacker' || role === 'judge'
@@ -425,6 +433,7 @@ async function executeState(
           key,
           state: machineState.name,
           step: step.name,
+          type: step.type ?? 'agent',
           agent: agentName,
           role,
           outputSummary: result.outputSummary,
@@ -518,4 +527,24 @@ function evidenceFor(steps: readonly StepOutcome[], state: string): string {
   const own = steps.filter((step) => step.state === state)
   if (own.length === 0) return '（本状态暂无前置步骤产出）'
   return own.map((step) => buildStepEvidence([step])).join('\n\n---\n\n')
+}
+
+/**
+ * Structured payloads from all completed steps, keyed `<state>/<step>`.
+ * Later steps of the same key overwrite earlier ones (re-entered states).
+ */
+function buildStepData(
+  stateOutcomes: readonly StateOutcome[],
+  completedSteps: readonly StepOutcome[],
+): Record<string, unknown> {
+  const collected: Record<string, unknown> = {}
+  for (const outcome of stateOutcomes) {
+    for (const step of outcome.steps) {
+      if (step.data !== undefined) collected[`${step.state}/${step.step}`] = step.data
+    }
+  }
+  for (const step of completedSteps) {
+    if (step.data !== undefined) collected[`${step.state}/${step.step}`] = step.data
+  }
+  return collected
 }
