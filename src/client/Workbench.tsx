@@ -340,7 +340,7 @@ function WorkflowDetail(props: {
   const set = (id: string, value: string): void => { setInputs({ ...inputs, [id]: value }) }
   const fields = workflow.taskFields
   const filled = Object.entries(inputs).filter(([, value]) => value.trim() !== '')
-  const paramFlags = filled.map(([id, value]) => `--param ${id}=${value}`).join(' ')
+  const paramFlags = filled.map(([id, value]) => `--param ${id}=${encodeURIComponent(value)}`).join(' ')
   return (
     <div className={styles.detail}>
       <h2 className={styles.detailTitle}>{workflow.name}</h2>

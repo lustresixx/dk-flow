@@ -14,31 +14,63 @@ import type { WorkflowConfig } from './dsl/types.js'
 const ok = (text: string): CommandResult => ({ kind: 'success', text })
 const err = (text: string): CommandResult => ({ kind: 'error', text })
 
-/** Parse `--key value` / `--key=value` pairs from command input. */
-function parseFlags(rawInput: string): { positional: string[]; flags: Map<string, string> } {
+/** Parsed command input: positionals plus flags, repeated flags in order. */
+export interface ParsedFlags {
+  positional: string[]
+  flags: Map<string, string[]>
+}
+
+/**
+ * Parse `--key value` / `--key=value` pairs from command input. Repeated
+ * flags accumulate (the workbench sends several `--param id=value` pairs);
+ * callers wanting the usual single-value semantics read the last occurrence.
+ */
+export function parseFlags(rawInput: string): ParsedFlags {
   const positional: string[] = []
-  const flags = new Map<string, string>()
+  const flags = new Map<string, string[]>()
   const tokens = rawInput.split(/\s+/).filter((token) => token !== '')
   for (let i = 0; i < tokens.length; i += 1) {
     const token = tokens[i]!
     if (token.startsWith('--')) {
       const eq = token.indexOf('=')
+      let key: string
+      let value: string
       if (eq >= 0) {
-        flags.set(token.slice(2, eq), token.slice(eq + 1))
+        key = token.slice(2, eq)
+        value = token.slice(eq + 1)
       } else {
+        key = token.slice(2)
         const next = tokens[i + 1]
         if (next !== undefined && !next.startsWith('--')) {
-          flags.set(token.slice(2), next)
+          value = next
           i += 1
         } else {
-          flags.set(token.slice(2), 'true')
+          value = 'true'
         }
       }
+      const list = flags.get(key) ?? []
+      list.push(value)
+      flags.set(key, list)
     } else {
       positional.push(token)
     }
   }
   return { positional, flags }
+}
+
+/** Last occurrence of a flag, for flags that only make sense once. */
+function lastFlag(flags: Map<string, string[]>, key: string): string | undefined {
+  const list = flags.get(key)
+  return list === undefined || list.length === 0 ? undefined : list[list.length - 1]
+}
+
+/** Decode a URI-encoded flag value; plain text passes through untouched. */
+function decodeFlagValue(raw: string): string {
+  try {
+    return decodeURIComponent(raw)
+  } catch {
+    return raw
+  }
 }
 
 const VERDICT_TEXT: Record<string, string> = {
@@ -162,8 +194,8 @@ async function dispatch(ctx: Context, service: AceHarnessService, invocation: Co
           .at(-1)
         if (!template) return err(`未找到模板「${templateId}」`)
         const values: Record<string, unknown> = {}
-        for (const [key, value] of flags) {
-          if (key !== 'file' && key !== 'save' && key !== 'param') values[key] = value
+        for (const [key, list] of flags) {
+          if (key !== 'file' && key !== 'save' && key !== 'param') values[key] = list[list.length - 1]!
         }
         for (const [key, value] of Object.entries(parseParamFlags(flags))) values[key] = value
         const instantiated = await service.instantiate(templateId, undefined, values, {})
@@ -172,7 +204,7 @@ async function dispatch(ctx: Context, service: AceHarnessService, invocation: Co
             ? `\n（运行时将询问：${instantiated.pendingParams.map((p) => p.label).join('、')}；也可现在用 --param 预填固化）`
             : ''
         if (flags.has('save')) {
-          const fileName = flags.get('file') ?? `${templateId}.yaml`
+          const fileName = lastFlag(flags, 'file') ?? `${templateId}.yaml`
           const saved = await service.saveWorkflowConfig(workspace, fileName, instantiated.yamlText)
           return ok(`已从模板「${templateId}」创建工作流并保存到 ${saved}${pendingNote}\n\n${instantiated.yamlText}`)
         }
@@ -244,12 +276,12 @@ async function dispatch(ctx: Context, service: AceHarnessService, invocation: Co
 }
 
 /** Read repeated `--param id=value` flags into a values record. */
-function parseParamFlags(flags: Map<string, string>): Record<string, string> {
+export function parseParamFlags(flags: Map<string, string[]>): Record<string, string> {
   const values: Record<string, string> = {}
-  const raw = flags.get('param')
-  if (!raw) return values
-  const match = /^([A-Za-z0-9_-]+)=(.*)$/.exec(raw)
-  if (match) values[match[1]!] = match[2]!
+  for (const raw of flags.get('param') ?? []) {
+    const match = /^([A-Za-z0-9_-]+)=(.*)$/.exec(raw)
+    if (match) values[match[1]!] = decodeFlagValue(match[2]!)
+  }
   return values
 }
 
@@ -259,15 +291,15 @@ async function runWorkflow(
   agent: Agent,
   signal: AbortSignal,
   positional: string[],
-  flags: Map<string, string>,
+  flags: Map<string, string[]>,
 ): Promise<CommandResult> {
   const target = positional[1]
   if (!target) return err('用法：/workflow run <workflowFile | templateId> [--param id=value ...] [--requirement text] [--wait]')
   const workspace = service.workspaceOf(agent)
   const values: Record<string, string> = {}
   Object.assign(values, parseParamFlags(flags))
-  for (const [key, value] of flags) {
-    if (key !== 'wait' && key !== 'requirement' && key !== 'param') values[key] = value
+  for (const [key, list] of flags) {
+    if (key !== 'wait' && key !== 'requirement' && key !== 'param') values[key] = list[list.length - 1]!
   }
 
   // Resolve: workflow instance first, then template instantiation.
@@ -332,7 +364,7 @@ async function runWorkflow(
     workflow = { config: instantiated.config, configFile: target }
   }
 
-  const requirement = flags.get('requirement')
+  const requirement = lastFlag(flags, 'requirement')
   if (requirement && workflow.config.context) {
     workflow.config.context.requirements = requirement
   }
