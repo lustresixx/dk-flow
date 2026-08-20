@@ -218,6 +218,7 @@ export interface RunStreamSnapshot {
   stateOutputs: { state: string; verdict: string; output: string }[]
   /** Per-step streaming log: the current entry grows live. */
   stepLog: {
+    key: string
     state: string
     step: string
     agent: string | null
@@ -692,6 +693,38 @@ export default class AceHarnessService extends Service {
             output: truncate(last?.outputSummary ?? '', 160),
           }
         })
+        // Derive the step log from the persisted progress so every step kind
+        // (agent, script, subworkflow) appears; the in-flight agent step keeps
+        // its live text until the persist after its completion finalizes it.
+        const byKey = new Map<string, number>()
+        stream.stepLog.forEach((entry, index) => {
+          byKey.set(entry.key, index)
+        })
+        const completedSteps = [
+          ...runState.stateOutcomes.flatMap((outcome) => outcome.steps),
+          ...(runState.pendingState?.completedSteps ?? []),
+        ]
+        for (const step of completedSteps) {
+          const existing = byKey.get(step.key)
+          if (existing === undefined) {
+            stream.stepLog.push({
+              key: step.key,
+              state: step.state,
+              step: step.step,
+              agent: step.agent ?? null,
+              role: step.role ?? null,
+              text: step.outputSummary,
+              finished: true,
+            })
+            byKey.set(step.key, stream.stepLog.length - 1)
+          } else {
+            const entry = stream.stepLog[existing]
+            if (entry && !entry.finished) {
+              entry.text = step.outputSummary
+              entry.finished = true
+            }
+          }
+        }
         stream.seq += 1
       }
       this.ctx.emit('ace/run-updated', {
@@ -791,6 +824,7 @@ export default class AceHarnessService extends Service {
           stream.childSessionId = null
           stream.foldIndex = 0
           stream.stepLog.push({
+            key: `${input.ctx.state}/${input.stepName}`,
             state: input.ctx.state,
             step: input.stepName,
             agent: input.agentName,

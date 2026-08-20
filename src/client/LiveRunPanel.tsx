@@ -159,6 +159,19 @@ export function LiveRunPanel(props: LiveRunPanelProps): JSX.Element | null {
 
   if (!runId || !snapshot || dismissed === runId) return null
   const progress = snapshot.totalSteps > 0 ? Math.round((snapshot.completedSteps / snapshot.totalSteps) * 100) : 0
+  const active = ACTIVE_STATUSES.has(snapshot.status)
+
+  const stopRun = async (): Promise<void> => {
+    try {
+      await fetch('/plugins/dsh-ace-harness/stop', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ runId }),
+      })
+    } catch {
+      // Best-effort; the run registry also stops it on /workflow stop.
+    }
+  }
 
   return (
     <div className={styles.panel}>
@@ -169,6 +182,11 @@ export function LiveRunPanel(props: LiveRunPanelProps): JSX.Element | null {
         <span className={styles.status} data-status={snapshot.status}>
           {STATUS_TEXT[snapshot.status] ?? snapshot.status}
         </span>
+        {active ? (
+          <button type="button" className={styles.stopButton} onClick={() => { void stopRun() }}>
+            停止
+          </button>
+        ) : null}
         <button type="button" className={styles.headerButton} onClick={() => { setCollapsed(!collapsed) }}>
           {collapsed ? '□' : '—'}
         </button>
@@ -205,8 +223,8 @@ export function LiveRunPanel(props: LiveRunPanelProps): JSX.Element | null {
             {snapshot.stepLog.length === 0 ? (
               <div className={styles.stepLogEmpty}>（等待第一步开始…）</div>
             ) : (
-              snapshot.stepLog.map((entry, index) => (
-                <div key={`${entry.state}/${entry.step}/${index}`} className={styles.stepLogItem} data-finished={entry.finished ? 'true' : 'false'}>
+              snapshot.stepLog.map((entry) => (
+                <div key={entry.key} className={styles.stepLogItem} data-finished={entry.finished ? 'true' : 'false'}>
                   <div className={styles.stepLogHead}>
                     <span className={styles.stepLogName}>{entry.step}</span>
                     {entry.agent ? <span className={styles.stepLogAgent}>{entry.agent}</span> : null}

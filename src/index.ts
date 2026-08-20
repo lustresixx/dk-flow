@@ -416,6 +416,34 @@ export function apply(ctx: Context, config: Config): void {
       },
     }), 'ace-harness: stream route')
 
+    // Stop an active run from the web panel.
+    ctx.effect(() => webServer.register({
+      kind: 'exact',
+      path: '/plugins/dsh-ace-harness/stop',
+      handler: async (req, res) => {
+        try {
+          if (req.method !== 'POST') {
+            res.writeHead(405, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end('method not allowed')
+            return
+          }
+          const body = JSON.parse(await readRequestBody(req, 64_000)) as { runId?: string }
+          const runId = body.runId
+          if (!runId) {
+            res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end('缺少 runId')
+            return
+          }
+          const stopped = aceHarness.stopRun(runId)
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+          res.end(JSON.stringify({ ok: stopped, runId }))
+        } catch (error) {
+          res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+          res.end(String(error))
+        }
+      },
+    }), 'ace-harness: stop route')
+
     // Packaged artwork: the ACE logo and favicon, served through an explicit
     // allowlist (no path traversal).
     const assetsDir = assetsRoot()

@@ -175,10 +175,12 @@ context:
       - id: title
         label: 优化任务
         type: text
+        required: true
         placeholder: "例如：优化工作流引擎性能"
       - id: description
         label: 优化目标与约束
         type: textarea
+        required: true
         placeholder: 说明要优化的方向、量化目标、约束与验收期望
       - id: acceptanceCriteria
         label: 验收期望

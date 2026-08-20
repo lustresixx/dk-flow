@@ -4,7 +4,7 @@
   right: 16px;
   width: 430px;
   max-height: calc(100vh - 140px);
-  z-index: 9200;
+  z-index: 9900;
   display: flex;
   flex-direction: column;
   border-radius: 14px;
@@ -61,6 +61,21 @@
   cursor: pointer;
   font-size: 14px;
   padding: 0 4px;
+}
+
+.stopButton {
+  border: 1px solid rgba(248, 113, 113, 0.5);
+  background: rgba(248, 113, 113, 0.14);
+  color: #ff9d9d;
+  border-radius: 8px;
+  padding: 3px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.stopButton:hover {
+  background: rgba(248, 113, 113, 0.28);
 }
 
 .body {

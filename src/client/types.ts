@@ -99,6 +99,7 @@ export interface StreamSnapshotDto {
   stateOutputs: { state: string; verdict: string; output: string }[]
   /** Per-step streaming log: the current entry grows live. */
   stepLog: {
+    key: string
     state: string
     step: string
     agent: string | null

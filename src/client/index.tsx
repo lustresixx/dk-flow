@@ -5,8 +5,10 @@
  * and watches run progress through the host state route.
  */
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { InputTriggerSource } from '@deepseek-ai/dsh-client-ui-input-trigger/client'
 import { createRoot } from 'react-dom/client'
 import { AcePanel } from './AcePanel.tsx'
+import { workflowTriggerSource } from './workflow-trigger.ts'
 
 /** Required client services: the sessions face for submission. */
 export const inject = ['sessions']
@@ -48,4 +50,16 @@ export function apply(ctx: ClientContext): void {
     root.unmount()
     host.remove()
   }, 'ace-harness: panel')
+
+  // Slash-menu trigger: typing `/workflow` offers the workflow list for
+  // keyboard pick-and-run. The service is optional (headless client tests).
+  const inputTriggers = ctx.get('inputTriggers') as
+    | { registerSource(source: InputTriggerSource): () => void }
+    | undefined
+  if (inputTriggers) {
+    ctx.effect(
+      () => inputTriggers.registerSource(workflowTriggerSource()),
+      'ace-harness: workflow trigger source',
+    )
+  }
 }
