@@ -45,6 +45,8 @@ import { captureGitSnapshot, saveGitSnapshot } from './store/git-baseline.js'
 import { appendExperience, loadRecentExperience, renderExperience } from './store/experience.js'
 import { workspaceRoot } from './store/paths.js'
 import { appendAudit, listRunStates, loadRunState, saveRunState } from './store/run-store.js'
+import { SqliteArchive, type ArchivedAuditRow, type ArchivedRunRow } from './store/sqlite-archive.js'
+import { readWorkspaceSettings, writeWorkspaceSettings } from './store/workspace-settings.js'
 import { deleteWorkflow, listWorkflows, loadWorkflow, saveWorkflow, type WorkflowEntry } from './store/workflow-store.js'
 import {
   instantiateTemplate as bindTemplate,
@@ -305,6 +307,7 @@ export default class AceHarnessService extends Service {
   private readonly catalogReady: Promise<void>
   private readonly active = new Map<string, AbortController>()
   private readonly streams = new Map<string, RunStreamState>()
+  private readonly archive = new SqliteArchive()
 
   constructor(ctx: Context, config: AceHarnessConfig = {}) {
     super(ctx, 'ace-harness')
@@ -812,7 +815,7 @@ export default class AceHarnessService extends Service {
     )
 
     this.ctx.emit('ace/workflow-start', { runId, workflowName: input.workflow.config.workflow.name })
-    await appendAudit(workspace, runId, this.config.runDirName, {
+    await this.writeAudit(workspace, runId, {
       at: state.startedAt,
       event: 'start',
       workflow: input.workflow.config.workflow.name,
@@ -929,7 +932,7 @@ export default class AceHarnessService extends Service {
     )
     // Traceable resume: mirror the 'start' audit row so a resumed run's log
     // shows who continued it and when.
-    await appendAudit(workspace, input.runId, this.config.runDirName, {
+    await this.writeAudit(workspace, input.runId, {
       at: new Date().toISOString(),
       event: 'resume',
       workflow: persisted.workflowName,
@@ -963,7 +966,7 @@ export default class AceHarnessService extends Service {
             }, 10 * 60_000)
             stream.pruneTimer.unref?.()
           }
-          await appendAudit(workspace, runId, this.config.runDirName, {
+          await this.writeAudit(workspace, runId, {
             at: new Date().toISOString(),
             event: 'end',
             status: runResult.status,
@@ -1115,6 +1118,74 @@ export default class AceHarnessService extends Service {
     return workspaceRoot(agent.session.header.cwd, process.cwd())
   }
 
+  /** Whether the workspace opted into the SQLite run archive. */
+  private async sqliteEnabled(workspace: string): Promise<boolean> {
+    return (await readWorkspaceSettings(workspace, this.config.runDirName)).sqliteArchive
+  }
+
+  /** Append one audit event: JSONL is authoritative; SQLite mirrors when on. */
+  private async writeAudit(workspace: string, runId: string, event: Record<string, unknown>): Promise<void> {
+    await appendAudit(workspace, runId, this.config.runDirName, event)
+    if (await this.sqliteEnabled(workspace)) {
+      try {
+        this.archive.archiveAudit(workspace, this.config.runDirName, runId, event)
+      } catch {
+        // Archive is a mirror; ignore write failures.
+      }
+    }
+  }
+
+  /** SQLite archive status of one workspace (for the state route). */
+  async sqliteStatus(workspace: string): Promise<{ enabled: boolean; archived: number; dbFile: string | null }> {
+    const enabled = await this.sqliteEnabled(workspace)
+    if (!enabled) return { enabled: false, archived: 0, dbFile: null }
+    let archived = 0
+    try {
+      archived = this.archive.countRuns(workspace, this.config.runDirName)
+    } catch {
+      archived = 0
+    }
+    return { enabled: true, archived, dbFile: this.archive.dbFile(workspace, this.config.runDirName) }
+  }
+
+  /** Toggle the SQLite archive; enabling backfills the existing file store. */
+  async setSqliteArchive(
+    workspace: string,
+    enabled: boolean,
+  ): Promise<{ enabled: boolean; backfilled: number; dbFile: string }> {
+    await writeWorkspaceSettings(workspace, this.config.runDirName, { sqliteArchive: enabled })
+    let backfilled = 0
+    if (enabled) backfilled = await this.archive.backfill(workspace, this.config.runDirName)
+    return { enabled, backfilled, dbFile: this.archive.dbFile(workspace, this.config.runDirName) }
+  }
+
+  /** Query archived runs (empty result when the archive is disabled). */
+  async archivedRuns(
+    workspace: string,
+    query: { limit?: number; offset?: number; workflow?: string; status?: string } = {},
+  ): Promise<{ enabled: boolean; total: number; rows: ArchivedRunRow[] }> {
+    if (!(await this.sqliteEnabled(workspace))) return { enabled: false, total: 0, rows: [] }
+    return {
+      enabled: true,
+      total: this.archive.countRuns(workspace, this.config.runDirName),
+      rows: this.archive.queryRuns(workspace, this.config.runDirName, query),
+    }
+  }
+
+  /** Full archived evidence chain of one run (null when absent/disabled). */
+  async archivedRunDetail(
+    workspace: string,
+    runId: string,
+  ): Promise<{ run: ArchivedRunRow; state: RunState | null; audit: ArchivedAuditRow[] } | null> {
+    if (!(await this.sqliteEnabled(workspace))) return null
+    return this.archive.queryRunDetail(workspace, this.config.runDirName, runId)
+  }
+
+  /** Close archive database handles (plugin dispose). */
+  closeArchives(): void {
+    this.archive.close()
+  }
+
   private engineOptions(
     workspace: string,
     parent: Agent,
@@ -1127,6 +1198,15 @@ export default class AceHarnessService extends Service {
   ): EngineRunOptions {
     const persist = async (runState: RunState): Promise<void> => {
       await saveRunState(workspace, runState, this.config.runDirName)
+      // Opt-in SQLite mirror: long-term, queryable evidence chain. A mirror
+      // failure must never break the run — the JSON file stays authoritative.
+      if (await this.sqliteEnabled(workspace)) {
+        try {
+          this.archive.archiveRun(workspace, this.config.runDirName, runState)
+        } catch {
+          // Archive is a mirror; ignore write failures.
+        }
+      }
       const stream = this.streams.get(runId)
       if (stream) {
         stream.status = runState.status

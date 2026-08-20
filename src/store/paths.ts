@@ -34,3 +34,8 @@ export function runsRoot(workspace: string, runDirName: string): string {
 export function runDir(workspace: string, runId: string, runDirName: string): string {
   return join(runsRoot(workspace, runDirName), runId)
 }
+
+/** Plugin state directory of one workspace: `<workspace>/<runDirName>`. */
+export function runStateDir(workspace: string, runDirName: string): string {
+  return join(workspace, runDirName)
+}

@@ -127,6 +127,10 @@ export function apply(ctx: Context, config: Config): void {
   // (and unregisters when the fiber unloads), so direct construction makes
   // the instance immediately resolvable for commands, tools, and routes.
   const aceHarness = new AceHarnessService(ctx, resolved)
+  // Close SQLite archive handles when this plugin's fiber unloads.
+  ctx.effect(() => () => {
+    aceHarness.closeArchives()
+  })
 
   registerCommands(ctx, aceHarness)
   registerTools(ctx, aceHarness)
@@ -226,7 +230,7 @@ export function apply(ctx: Context, config: Config): void {
             taskFieldsCache.set(key, { at: Date.now(), value })
             return value
           }
-          const [agents, templates, runsByWorkspace, workflowsByWorkspace] = await Promise.all([
+          const [agents, templates, runsByWorkspace, workflowsByWorkspace, sqliteByWorkspace] = await Promise.all([
             aceHarness.listAgents(),
             aceHarness.listTemplates(),
             Promise.all(roots.map(async (w) => ({
@@ -247,6 +251,7 @@ export function apply(ctx: Context, config: Config): void {
                 })),
               ),
             }))),
+            Promise.all(roots.map(async (w) => aceHarness.sqliteStatus(w.path))),
           ])
         const body = JSON.stringify({
           agents: agents.map((agent) => ({
@@ -283,6 +288,7 @@ export function apply(ctx: Context, config: Config): void {
           workspaces: runsByWorkspace.map((entry, index) => ({
             path: entry.path,
             title: roots[index]?.workspace ?? entry.path,
+            sqliteArchive: sqliteByWorkspace[index] ?? { enabled: false, archived: 0, dbFile: null },
             runs: entry.runs.map(({ run, topology }) => ({
               runId: run.id,
               /** Owning session: the client gates the live popup on it. */
@@ -638,6 +644,79 @@ export function apply(ctx: Context, config: Config): void {
         }
       },
     }), 'ace-harness: test-state route')
+
+    // Workspace toggle for the SQLite run archive (control-panel switch).
+    ctx.effect(() => webServer.register({
+      kind: 'exact',
+      path: '/plugins/dsh-ace-harness/workspace-settings',
+      handler: async (req, res) => {
+        try {
+          if (req.method !== 'POST') {
+            res.writeHead(405, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end('method not allowed')
+            return
+          }
+          const body = JSON.parse(await readRequestBody(req, 100_000)) as {
+            workspace?: string
+            sqliteArchive?: boolean
+          }
+          const known = workspaceRegistry.list().map((workspace) => workspace.path)
+          const workspacePath = body.workspace ?? known[0] ?? ''
+          if (!known.includes(workspacePath)) {
+            res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end(`未知工作区「${workspacePath}」`)
+            return
+          }
+          const result = await aceHarness.setSqliteArchive(workspacePath, body.sqliteArchive === true)
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+          res.end(JSON.stringify(result))
+        } catch (error) {
+          res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+          res.end(String((error as Error).message))
+        }
+      },
+    }), 'ace-harness: workspace-settings route')
+
+    // Archived run history from the SQLite mirror (list + full evidence chain).
+    ctx.effect(() => webServer.register({
+      kind: 'prefix',
+      path: '/plugins/dsh-ace-harness/runs-history',
+      handler: async (req, res) => {
+        try {
+          const url = new URL(req.url ?? '/', 'http://x')
+          const known = workspaceRegistry.list().map((workspace) => workspace.path)
+          const workspacePath = url.searchParams.get('workspace') ?? known[0] ?? ''
+          if (!known.includes(workspacePath)) {
+            res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end(`未知工作区「${workspacePath}」`)
+            return
+          }
+          const tail = url.pathname.slice('/plugins/dsh-ace-harness/runs-history'.length).replace(/^\/+/, '')
+          if (tail !== '') {
+            const detail = await aceHarness.archivedRunDetail(workspacePath, decodeURIComponent(tail))
+            if (!detail) {
+              res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+              res.end('归档中未找到该运行（或未开启 SQLite 归档）')
+              return
+            }
+            res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+            res.end(JSON.stringify(detail))
+            return
+          }
+          const result = await aceHarness.archivedRuns(workspacePath, {
+            limit: Number(url.searchParams.get('limit') ?? '50') || 50,
+            offset: Number(url.searchParams.get('offset') ?? '0') || 0,
+            workflow: url.searchParams.get('workflow') ?? undefined,
+            status: url.searchParams.get('status') ?? undefined,
+          })
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+          res.end(JSON.stringify(result))
+        } catch (error) {
+          res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+          res.end(String((error as Error).message))
+        }
+      },
+    }), 'ace-harness: runs-history route')
 
     // Live streaming projection of one run, polled by the web panel.
     ctx.effect(() => webServer.register({

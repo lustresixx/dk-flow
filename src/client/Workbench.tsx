@@ -51,6 +51,36 @@ const STEP_TEXT: Record<string, string> = {
 
 const ACTIVE_RUN_STATUSES = new Set(['preparing', 'running', 'waiting-human'])
 
+/** One archived run row from the SQLite history route. */
+interface ArchivedRunRow {
+  runId: string
+  workflowName: string
+  status: string
+  currentState: string | null
+  transitionCount: number
+  totalSteps: number
+  completedSteps: number
+  verdict: string | null
+  error: string | null
+  parentSessionId: string | null
+  startedAt: string
+  updatedAt: string
+  finishedAt: string | null
+}
+
+/** Archived evidence chain of one run (runs-history/<runId>). */
+interface ArchivedRunDetail {
+  run: ArchivedRunRow
+  state: {
+    stateOutcomes?: Array<{
+      state: string
+      verdict: { verdict: string }
+      steps: Array<{ step: string; type: string; verdict?: { verdict: string }; outputSummary: string }>
+    }>
+  } | null
+  audit: Array<{ id: number; at: string; event: string; payload: Record<string, unknown> }>
+}
+
 const EDGE_COLORS: Record<string, string> = {
   success: 'var(--dsw-alias-state-success-primary, #12a150)',
   pass: 'var(--dsw-alias-state-success-primary, #12a150)',
@@ -163,8 +193,52 @@ export function Workbench(props: WorkbenchProps): JSX.Element {
     [],
   )
 
+  /** SQLite archive toggle + archived run drill-down. */
+  const [archiveDetail, setArchiveDetail] = useState<{ workspacePath: string; detail: ArchivedRunDetail } | null>(null)
+  const toggleSqlite = useCallback(
+    async (workspacePath: string, enabled: boolean): Promise<void> => {
+      try {
+        const response = await fetch('/plugins/dsh-ace-harness/workspace-settings', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ workspace: workspacePath, sqliteArchive: enabled }),
+        })
+        if (!response.ok) throw new Error(await response.text())
+        const result = (await response.json()) as { enabled: boolean; backfilled: number; dbFile: string }
+        setNotice(
+          result.enabled
+            ? `已开启 SQLite 归档（回填 ${result.backfilled} 条历史运行）`
+            : '已关闭 SQLite 归档（已归档数据保留，不再写入新记录）',
+        )
+        void refresh()
+      } catch (err) {
+        setNotice(`设置失败：${(err as Error).message}`)
+      }
+    },
+    [refresh],
+  )
+  const openArchivedRun = useCallback(
+    async (workspacePath: string, runId: string): Promise<void> => {
+      try {
+        const response = await fetch(
+          `/plugins/dsh-ace-harness/runs-history/${encodeURIComponent(runId)}?workspace=${encodeURIComponent(workspacePath)}`,
+          { cache: 'no-store' },
+        )
+        if (!response.ok) throw new Error(await response.text())
+        setRun(null)
+        setTemplate(null)
+        setWorkflow(null)
+        setArchiveDetail({ workspacePath, detail: (await response.json()) as ArchivedRunDetail })
+      } catch (err) {
+        setNotice(`读取归档失败：${(err as Error).message}`)
+      }
+    },
+    [],
+  )
+
   const agents = state?.agents.map((agent) => agent.name) ?? []
   const workspaces = state?.workspaces ?? []
+  const firstWorkspace = workspaces[0]
   const runs = workspaces.flatMap((workspace) => workspace.runs.map((r) => ({ ...r, workspaceTitle: workspace.title, workspacePath: workspace.path })))
   const workflows = workspaces.flatMap((workspace) =>
     workspace.workflows.map((entry) => ({ entry, workspacePath: workspace.path, workspaceTitle: workspace.title })),
@@ -191,6 +265,7 @@ export function Workbench(props: WorkbenchProps): JSX.Element {
                 setTemplate(null)
                 setWorkflow(null)
                 setRun(null)
+                setArchiveDetail(null)
               }}
             >
               {key === 'templates' ? '模板' : key === 'workflows' ? '工作流' : '运行记录'}
@@ -255,19 +330,32 @@ export function Workbench(props: WorkbenchProps): JSX.Element {
                 ))}
               </>
             ) : (
-              runs.map((item) => (
-                <button
-                  key={item.runId}
-                  type="button"
-                  className={run?.runId === item.runId ? styles.itemActive : styles.item}
-                  onClick={() => { setRun(item) }}
-                >
-                  <span className={styles.itemName}>{item.workflowName}</span>
-                  <span className={styles.itemMeta} data-status={item.status}>
-                    {STATUS_TEXT[item.status] ?? item.status} · {item.completedSteps}/{item.totalSteps} 步
-                  </span>
-                </button>
-              ))
+              <>
+                {firstWorkspace ? (
+                  <ArchiveCard
+                    workspacePath={firstWorkspace.path}
+                    archive={firstWorkspace.sqliteArchive}
+                    onToggle={(enabled) => { void toggleSqlite(firstWorkspace.path, enabled) }}
+                    onOpen={(runId) => { void openArchivedRun(firstWorkspace.path, runId) }}
+                  />
+                ) : null}
+                {runs.map((item) => (
+                  <button
+                    key={item.runId}
+                    type="button"
+                    className={run?.runId === item.runId ? styles.itemActive : styles.item}
+                    onClick={() => {
+                      setRun(item)
+                      setArchiveDetail(null)
+                    }}
+                  >
+                    <span className={styles.itemName}>{item.workflowName}</span>
+                    <span className={styles.itemMeta} data-status={item.status}>
+                      {STATUS_TEXT[item.status] ?? item.status} · {item.completedSteps}/{item.totalSteps} 步
+                    </span>
+                  </button>
+                ))}
+              </>
             )}
             {tab === 'templates' && state && state.templates.length === 0 ? <p className={styles.empty}>没有内置模板</p> : null}
             {tab === 'workflows' && workflows.length === 0 ? <p className={styles.empty}>暂无 workflow 实例——点上方「新建空白工作流」从零编排，或到「模板」页从模板创建</p> : null}
@@ -287,6 +375,12 @@ export function Workbench(props: WorkbenchProps): JSX.Element {
                 workspacePath={workflow.workspacePath}
                 submit={submit}
                 onEdit={(fileName) => { void openEditor(workflow.workspacePath, fileName) }}
+              />
+            ) : tab === 'runs' && archiveDetail ? (
+              <ArchiveDetailView
+                workspacePath={archiveDetail.workspacePath}
+                detail={archiveDetail.detail}
+                onClose={() => { setArchiveDetail(null) }}
               />
             ) : tab === 'runs' && run ? (
               <RunDetail
@@ -691,6 +785,142 @@ function RunDetail(props: {
         ) : null}
         <button type="button" className={styles.secondary} onClick={props.refresh}>
           刷新
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/** SQLite archive switch card at the top of the runs tab. */
+function ArchiveCard(props: {
+  workspacePath: string
+  archive: { enabled: boolean; archived: number; dbFile: string | null }
+  onToggle: (enabled: boolean) => void
+  onOpen: (runId: string) => void
+}): JSX.Element {
+  const { archive } = props
+  const [recent, setRecent] = useState<ArchivedRunRow[]>([])
+  const enabled = archive.enabled
+  const archived = archive.archived
+  useEffect(() => {
+    if (!enabled) {
+      setRecent([])
+      return
+    }
+    let alive = true
+    const load = async (): Promise<void> => {
+      try {
+        const response = await fetch(
+          `/plugins/dsh-ace-harness/runs-history?workspace=${encodeURIComponent(props.workspacePath)}&limit=5`,
+          { cache: 'no-store' },
+        )
+        if (!response.ok) return
+        const body = (await response.json()) as { rows: ArchivedRunRow[] }
+        if (alive) setRecent(body.rows)
+      } catch {
+        // Best-effort list.
+      }
+    }
+    void load()
+    return () => { alive = false }
+  }, [enabled, archived, props.workspacePath])
+  return (
+    <div className={styles.archiveCard}>
+      <label className={styles.archiveSwitchRow}>
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(event) => { props.onToggle(event.target.checked) }}
+        />
+        <span className={styles.archiveTitle}>SQLite 持久化运行记录</span>
+      </label>
+      <p className={styles.archiveHint}>
+        默认关闭。开启后每次运行的进度快照与审计事件实时写入 <code>.ace-workflows/archive.db</code>，并回填已有运行——证据链长期可查。
+      </p>
+      {enabled ? (
+        <>
+          <p className={styles.archiveMeta}>已归档 {archived} 条运行记录</p>
+          {recent.length > 0 ? (
+            <ul className={styles.archiveList}>
+              {recent.map((item) => (
+                <li key={item.runId}>
+                  <button type="button" className={styles.archiveItem} onClick={() => { props.onOpen(item.runId) }}>
+                    <span className={styles.itemName}>{item.workflowName}</span>
+                    <span className={styles.itemMeta} data-status={item.status}>
+                      {STATUS_TEXT[item.status] ?? item.status} · {item.startedAt.slice(0, 19).replace('T', ' ')}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </>
+      ) : null}
+    </div>
+  )
+}
+
+/** Read-only archived run view: state evidence chain + audit timeline. */
+function ArchiveDetailView(props: {
+  workspacePath: string
+  detail: ArchivedRunDetail
+  onClose: () => void
+}): JSX.Element {
+  const { detail } = props
+  const outcomes = detail.state?.stateOutcomes ?? []
+  return (
+    <div className={styles.detail}>
+      <h2 className={styles.detailTitle}>
+        {detail.run.workflowName}
+        <span className={styles.verdictBadge} data-verdict={detail.run.verdict ?? detail.run.status}>
+          {VERDICT_TEXT[detail.run.verdict ?? ''] ?? STATUS_TEXT[detail.run.status] ?? detail.run.status}
+        </span>
+      </h2>
+      <p className={styles.detailDesc}>
+        归档记录 · {detail.run.runId} · {detail.run.startedAt}
+        {detail.run.parentSessionId ? ` · 会话 ${detail.run.parentSessionId}` : ''}
+      </p>
+      {detail.run.error ? <p className={styles.errorText}>{detail.run.error}</p> : null}
+      <h3 className={styles.sectionTitle}>状态证据链（{outcomes.length} 状态）</h3>
+      <ol className={styles.runTimeline}>
+        {outcomes.map((outcome) => (
+          <li key={outcome.state} className={styles.runStateItem}>
+            <div className={styles.runStateHead}>
+              <span className={styles.runStateName}>{outcome.state}</span>
+              <span className={styles.verdictBadge} data-verdict={outcome.verdict.verdict}>
+                {VERDICT_TEXT[outcome.verdict.verdict] ?? outcome.verdict.verdict}
+              </span>
+            </div>
+            <ol className={styles.stepTimeline}>
+              {outcome.steps.map((step) => (
+                <li key={step.step} className={styles.stepItem}>
+                  <span className={styles.stepName}>{step.step}</span>
+                  <span className={styles.stepAgent}>{STEP_TEXT[step.type] ?? step.type}</span>
+                  {step.verdict ? (
+                    <span className={styles.verdictBadge} data-verdict={step.verdict.verdict}>
+                      {VERDICT_TEXT[step.verdict.verdict] ?? step.verdict.verdict}
+                    </span>
+                  ) : null}
+                  {step.outputSummary ? <pre className={styles.stepOutput}>{step.outputSummary.slice(0, 300)}</pre> : null}
+                </li>
+              ))}
+            </ol>
+          </li>
+        ))}
+      </ol>
+      <h3 className={styles.sectionTitle}>审计时间线（{detail.audit.length} 事件）</h3>
+      <ol className={styles.runTimeline}>
+        {detail.audit.map((event) => (
+          <li key={event.id} className={styles.stepItem}>
+            <span className={styles.stepName}>{event.event}</span>
+            <span className={styles.stepAgent}>{event.at.slice(0, 19).replace('T', ' ')}</span>
+            <pre className={styles.stepOutput}>{JSON.stringify(event.payload)}</pre>
+          </li>
+        ))}
+      </ol>
+      <div className={styles.actions}>
+        <button type="button" className={styles.secondary} onClick={props.onClose}>
+          返回
         </button>
       </div>
     </div>

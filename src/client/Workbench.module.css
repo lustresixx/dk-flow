@@ -139,6 +139,83 @@
   color: #e6e6ee;
 }
 
+.archiveCard {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.archiveSwitchRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.archiveSwitchRow input[type='checkbox'] {
+  width: 15px;
+  height: 15px;
+  accent-color: #4f5bd5;
+  cursor: pointer;
+}
+
+.archiveTitle {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.archiveHint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #9a9ab0;
+}
+
+.archiveHint code {
+  font-size: 10.5px;
+  color: #c6c6da;
+}
+
+.archiveMeta {
+  margin: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #34d399;
+}
+
+.archiveList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.archiveItem {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: transparent;
+  color: #e6e6ee;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+}
+
+.archiveItem:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.04);
+}
+
 .itemActive {
   border-color: #4f5bd5;
   background: rgba(79, 91, 213, 0.12);

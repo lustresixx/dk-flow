@@ -97,6 +97,8 @@ export interface StateWorkflowDto {
 export interface StateWorkspaceDto {
   path: string
   title: string
+  /** SQLite run-archive status (opt-in per workspace). */
+  sqliteArchive: { enabled: boolean; archived: number; dbFile: string | null }
   runs: StateRunDto[]
   workflows: StateWorkflowDto[]
 }
