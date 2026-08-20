@@ -97,4 +97,13 @@ export interface StreamSnapshotDto {
   verdicts: { state: string; verdict: string }[]
   /** Completed states' actual output heads — the data flowing forward. */
   stateOutputs: { state: string; verdict: string; output: string }[]
+  /** Per-step streaming log: the current entry grows live. */
+  stepLog: {
+    state: string
+    step: string
+    agent: string | null
+    role: string | null
+    text: string
+    finished: boolean
+  }[]
 }

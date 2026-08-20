@@ -85,6 +85,7 @@ export function LiveRunPanel(props: LiveRunPanelProps): JSX.Element | null {
   const [dismissed, setDismissed] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState(false)
   const seqRef = useRef(0)
+  const logRef = useRef<HTMLDivElement | null>(null)
 
   // Stream the selected run; reset whenever the run changes or goes idle.
   useEffect(() => {
@@ -116,8 +117,13 @@ export function LiveRunPanel(props: LiveRunPanelProps): JSX.Element | null {
     }
   }, [runId, dismissed])
 
-  const nodes = useMemo<Node<LiveNodeData>[]>(() => {
-    if (!snapshot) return []
+  // Auto-scroll the per-step output log.
+  useEffect(() => {
+    const node = logRef.current
+    if (node) node.scrollTop = node.scrollHeight
+  }, [snapshot?.stepLog])
+
+  const nodes = useMemo<Node<LiveNodeData>[]>(() => {    if (!snapshot) return []
     const verdictByState = new Map(snapshot.verdicts.map((item) => [item.state, item.verdict]))
     return snapshot.states.map((state, index) => ({
       id: state.name,
@@ -194,6 +200,25 @@ export function LiveRunPanel(props: LiveRunPanelProps): JSX.Element | null {
                 <Controls showInteractive={false} />
               </ReactFlow>
             </div>
+          </div>
+          <div ref={logRef} className={styles.stepLog}>
+            {snapshot.stepLog.length === 0 ? (
+              <div className={styles.stepLogEmpty}>（等待第一步开始…）</div>
+            ) : (
+              snapshot.stepLog.map((entry, index) => (
+                <div key={`${entry.state}/${entry.step}/${index}`} className={styles.stepLogItem} data-finished={entry.finished ? 'true' : 'false'}>
+                  <div className={styles.stepLogHead}>
+                    <span className={styles.stepLogName}>{entry.step}</span>
+                    {entry.agent ? <span className={styles.stepLogAgent}>{entry.agent}</span> : null}
+                    {entry.role && entry.role !== 'neutral' ? <span className={styles.stepLogRole}>{entry.role}</span> : null}
+                    {entry.finished ? <span className={styles.stepLogDone}>完成</span> : <span className={styles.stepLogLive}>输出中…</span>}
+                  </div>
+                  <pre className={styles.stepLogText}>
+                    {entry.text === '' && !entry.finished ? '（正在执行，输出即将出现…）' : entry.text === '' ? '（无文本输出）' : entry.text}
+                  </pre>
+                </div>
+              ))
+            )}
           </div>
         </div>
       ) : null}

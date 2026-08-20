@@ -216,6 +216,15 @@ export interface RunStreamSnapshot {
   verdicts: { state: string; verdict: string }[]
   /** Completed states' actual output heads — the data flowing forward. */
   stateOutputs: { state: string; verdict: string; output: string }[]
+  /** Per-step streaming log: the current entry grows live. */
+  stepLog: {
+    state: string
+    step: string
+    agent: string | null
+    role: string | null
+    text: string
+    finished: boolean
+  }[]
 }
 
 /** Live streaming state for one run, updated by the step executor. */
@@ -226,6 +235,8 @@ interface RunStreamState extends RunStreamSnapshot {
   foldIndex: number
   /** Prune timer after settlement. */
   pruneTimer?: ReturnType<typeof setTimeout>
+  /** Index of the stepLog entry currently being streamed. */
+  stepLogIndex: number
 }
 
 /** Extract plain text from LLM content blocks. */
@@ -408,8 +419,10 @@ export default class AceHarnessService extends Service {
       ),
       verdicts: [],
       stateOutputs: [],
+      stepLog: [],
       childSessionId: null,
       foldIndex: 0,
+      stepLogIndex: -1,
     })
 
     const executor = this.makeExecutor(workspace, input.parent, runId, 1)
@@ -602,6 +615,7 @@ export default class AceHarnessService extends Service {
       transitions: entry.transitions,
       verdicts: entry.verdicts,
       stateOutputs: entry.stateOutputs,
+      stepLog: entry.stepLog,
     }
   }
 
@@ -776,6 +790,15 @@ export default class AceHarnessService extends Service {
           stream.text = ''
           stream.childSessionId = null
           stream.foldIndex = 0
+          stream.stepLog.push({
+            state: input.ctx.state,
+            step: input.stepName,
+            agent: input.agentName,
+            role: input.role,
+            text: '',
+            finished: false,
+          })
+          stream.stepLogIndex = stream.stepLog.length - 1
           stream.seq += 1
         }
         const request: SubagentStartRequest = {
@@ -817,6 +840,8 @@ export default class AceHarnessService extends Service {
                 entry.foldIndex = fold.index
                 if (fold.text !== '') {
                   entry.text += fold.text
+                  const logEntry = entry.stepLog[entry.stepLogIndex]
+                  if (logEntry) logEntry.text += fold.text
                   entry.seq += 1
                 }
               } catch (error) {
@@ -837,6 +862,11 @@ export default class AceHarnessService extends Service {
           const finalText = truncate(outputText || '(该步骤没有文本输出)', SUMMARY_BUDGET)
           if (stream) {
             stream.text = finalText
+            const logEntry = stream.stepLog[stream.stepLogIndex]
+            if (logEntry) {
+              logEntry.text = finalText
+              logEntry.finished = true
+            }
             stream.currentStep = null
             stream.agent = null
             stream.role = null
