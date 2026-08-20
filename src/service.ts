@@ -194,6 +194,12 @@ declare module '@deepseek-ai/cordis' {
 export interface AceRunHandle {
   runId: string
   jobId?: JobId
+  /**
+   * Set when a foreground run was detached into a background job because the
+   * calling turn aborted. The run keeps executing; `result` settles with its
+   * terminal outcome.
+   */
+  detachedJobId?: JobId
   result: Promise<RunResult>
 }
 
@@ -381,9 +387,10 @@ export default class AceHarnessService extends Service {
     const runId = `run-${Date.now()}-${randomSuffix()}`
     const controller = new AbortController()
     const linked = new AbortController()
-    const onAbort = (): void => linked.abort()
-    input.signal.addEventListener('abort', onAbort, { once: true })
-    controller.signal.addEventListener('abort', onAbort, { once: true })
+    const onStop = (): void => linked.abort()
+    // Only the run's own controller stops it; the calling turn's abort signal
+    // detaches foreground runs to a job instead (see below).
+    controller.signal.addEventListener('abort', onStop, { once: true })
     this.active.set(runId, controller)
 
     const state = createRunState({
@@ -457,10 +464,62 @@ export default class AceHarnessService extends Service {
     }
 
     const begin = this.beginRun(workspace, runId, options)
+    const workflowName = input.workflow.config.workflow.name
     if (input.mode === 'job') {
-      return { runId, ...this.detachAsJob(runId, input.parent, controller, begin, input.workflow.config.workflow.name) }
+      return { runId, ...this.detachAsJob(runId, input.parent, controller, begin, workflowName) }
     }
-    return { runId, result: begin() }
+    return this.detachOnTurnAbort(runId, input.parent, controller, input.signal, begin(), workflowName)
+  }
+
+  /**
+   * Wrap a foreground run so that a cancelled calling turn does not kill it:
+   * the run is detached into a background job and keeps executing. A run
+   * already parked in a human decision point still aborts — resume re-asks.
+   */
+  private detachOnTurnAbort(
+    runId: string,
+    parent: Agent,
+    controller: AbortController,
+    signal: AbortSignal,
+    running: Promise<RunResult>,
+    workflowName: string,
+  ): AceRunHandle {
+    let resolveResult!: (value: RunResult) => void
+    let rejectResult!: (reason: unknown) => void
+    const result = new Promise<RunResult>((resolvePromise, rejectPromise) => {
+      resolveResult = resolvePromise
+      rejectResult = rejectPromise
+    })
+    running.then(resolveResult, rejectResult)
+    let settled = false
+    running.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      },
+    )
+    const handle: AceRunHandle = { runId, result }
+    const detach = (): void => {
+      if (settled) return
+      if (this.streams.get(runId)?.status === 'waiting-human') {
+        controller.abort()
+        return
+      }
+      try {
+        const detached = this.detachAsJob(runId, parent, controller, () => running, workflowName)
+        handle.detachedJobId = detached.jobId
+        detached.result.then(resolveResult, rejectResult)
+      } catch {
+        // No jobs service in this profile: the run cannot outlive the turn.
+        controller.abort()
+      }
+    }
+    // A turn signal may already be aborted by the time the run starts.
+    if (signal.aborted) detach()
+    else signal.addEventListener('abort', detach, { once: true })
+    return handle
   }
 
   /** Resume a persisted run (authorized by its recorded parent session). */
@@ -483,9 +542,9 @@ export default class AceHarnessService extends Service {
     if (!workflow) throw new Error(`运行 ${input.runId} 引用的 workflow「${persisted.configFile}」不存在`)
     const controller = new AbortController()
     const linked = new AbortController()
-    const onAbort = (): void => linked.abort()
-    input.signal.addEventListener('abort', onAbort, { once: true })
-    controller.signal.addEventListener('abort', onAbort, { once: true })
+    const onStop = (): void => linked.abort()
+    // The run's own controller stops it; the turn signal detaches instead.
+    controller.signal.addEventListener('abort', onStop, { once: true })
     this.active.set(input.runId, controller)
     const executor = this.makeExecutor(workspace, input.parent, input.runId, 1)
     const options = this.engineOptions(
@@ -502,7 +561,7 @@ export default class AceHarnessService extends Service {
     if (input.mode === 'job') {
       return { runId: input.runId, ...this.detachAsJob(input.runId, input.parent, controller, begin, persisted.workflowName) }
     }
-    return { runId: input.runId, result: begin() }
+    return this.detachOnTurnAbort(input.runId, input.parent, controller, input.signal, begin(), persisted.workflowName)
   }
 
   /** Wrap the engine promise chain: end event, audit row, registry cleanup. */

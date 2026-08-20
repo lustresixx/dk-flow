@@ -107,7 +107,7 @@ export function registerTools(ctx: Context, service: AceHarnessService): void {
     defineTool({
       name: 'run_workflow',
       description:
-        '运行一个 ACE 状态机工作流：按 workflow 实例文件名或内置模板 id 启动，模板会先用参数实例化。每一步由专属角色的子 Agent 执行（defender/attacker/judge 对抗评审），verdict 驱动状态转移。wait=true 时同步等待终态并返回完整结果。运行前先用 workflow_list 确认模板/实例的必填参数并在 params 中提供（例如 requirements=输入文本）；缺少必填参数时会向用户弹窗询问。结果中的 failedStates 表示判定失败的状态：即使终态为 completed/success，只要 failedStates 非空，就应如实告知用户该运行走了失败分支，而不是报告“整体成功”。',
+        '运行一个 ACE 状态机工作流：按 workflow 实例文件名或内置模板 id 启动，模板会先用参数实例化。每一步由专属角色的子 Agent 执行（defender/attacker/judge 对抗评审），verdict 驱动状态转移。wait=true 时同步等待终态并返回完整结果。运行前先用 workflow_list 确认模板/实例的必填参数并在 params 中提供（例如 requirements=输入文本）；缺少必填参数时会向用户弹窗询问。结果中的 failedStates 表示判定失败的状态：即使终态为 completed/success，只要 failedStates 非空，就应如实告知用户该运行走了失败分支，而不是报告“整体成功”。重要：如果本调用被用户取消（返回 aborted），运行不会丢失——它已自动转为后台 job 继续执行；此时用 workflow_manage action=runs 找到最新 runId 并向用户说明运行仍在继续，不要重复启动。',
       parameters: {
         workflow: {
           type: 'string',
@@ -222,7 +222,7 @@ export function registerTools(ctx: Context, service: AceHarnessService): void {
     defineTool({
       name: 'workflow_manage',
       description:
-        '管理 ACE 工作流与运行：action=runs 列运行记录；action=show 查看一个运行的完整状态与各步结论；action=resume 恢复暂停/中断的运行；action=stop 停止运行中的实例；action=create 从内置模板创建 workflow 实例（参数可留空，留空的必填参数会转为运行时询问字段；可 save 保存到工作区 .dsh/workflows）。',
+        '管理 ACE 工作流与运行：action=runs 列运行记录；action=show 查看一个运行的完整状态与各步结论；action=resume 恢复暂停/中断的运行；action=stop 停止运行中的实例；action=create 从内置模板创建 workflow 实例（参数可留空，留空的必填参数会转为运行时询问字段；可 save 保存到工作区 .dsh/workflows）。resume 或 run 的等待被用户取消时，运行不会丢失——自动转为后台 job 继续执行，用 action=runs 查看最新 runId。',
       parameters: {
         action: {
           type: 'string',
