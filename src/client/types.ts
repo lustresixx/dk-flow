@@ -49,6 +49,11 @@ export interface StateRunDto {
   error: string | null
   startedAt: string
   finishedAt: string | null
+  /** Workflow topology for the run diagram; null when the config is unreadable. */
+  topology: {
+    states: { name: string; isInitial: boolean; isFinal: boolean; position: { x: number; y: number } | null }[]
+    transitions: { from: string; to: string; verdict: string | null; label: string | null }[]
+  } | null
   states: {
     state: string
     verdict: string
@@ -73,6 +78,15 @@ export interface StateWorkflowDto {
   source: 'project' | 'personal'
   stateCount: number
   stepCount: number
+  /** Run-time input fields the workflow asks for when it starts. */
+  taskFields: {
+    id: string
+    label: string
+    type: string
+    required: boolean
+    placeholder: string
+    description: string
+  }[]
 }
 
 export interface StateWorkspaceDto {

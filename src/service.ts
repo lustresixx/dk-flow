@@ -775,7 +775,7 @@ export default class AceHarnessService extends Service {
   }
 
   /** Resolve a workflow reference: instance name, template id, or relative path. */
-  private async resolveWorkflowConfig(
+  async resolveWorkflowConfig(
     workspace: string,
     configFile: string,
   ): Promise<{ config: WorkflowConfig; file: string } | null> {

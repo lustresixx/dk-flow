@@ -3,9 +3,20 @@
  * the left, detail or the React Flow editor on the right. The "后台页面"
  * behind the chat view.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  Background,
+  BackgroundVariant,
+  Controls,
+  Handle,
+  Position,
+  ReactFlow,
+  type Edge,
+  type Node,
+  type NodeProps,
+} from '@xyflow/react'
 import { EditorPane } from './WorkflowEditor.tsx'
-import type { AceStateDto, StateParameterDto, StateRunDto, StateTemplateDto, StateWorkflowDto } from './types.ts'
+import type { AceStateDto, StateRunDto, StateTemplateDto, StateWorkflowDto } from './types.ts'
 import styles from './Workbench.module.css'
 
 type Tab = 'templates' | 'workflows' | 'runs'
@@ -37,6 +48,15 @@ const STEP_TEXT: Record<string, string> = {
   llm: '快速LLM',
 }
 
+const ACTIVE_RUN_STATUSES = new Set(['preparing', 'running', 'waiting-human'])
+
+const EDGE_COLORS: Record<string, string> = {
+  success: '#34d399',
+  pass: '#34d399',
+  fail: '#f87171',
+  conditional_pass: '#fbbf24',
+}
+
 interface EditorState {
   yaml: string
   workspacePath: string
@@ -57,7 +77,6 @@ export function Workbench(props: WorkbenchProps): JSX.Element {
   const [template, setTemplate] = useState<StateTemplateDto | null>(null)
   const [workflow, setWorkflow] = useState<{ entry: StateWorkflowDto; workspacePath: string; workspaceTitle: string } | null>(null)
   const [run, setRun] = useState<StateRunDto | null>(null)
-  const [values, setValues] = useState<Record<string, string>>({})
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
@@ -191,14 +210,7 @@ export function Workbench(props: WorkbenchProps): JSX.Element {
                   key={`${item.id}@${item.version}`}
                   type="button"
                   className={template?.id === item.id ? styles.itemActive : styles.item}
-                  onClick={() => {
-                    setTemplate(item)
-                    const defaults: Record<string, string> = {}
-                    for (const parameter of item.parameters) {
-                      if (parameter.default !== undefined) defaults[parameter.id] = String(parameter.default)
-                    }
-                    setValues(defaults)
-                  }}
+                  onClick={() => { setTemplate(item) }}
                 >
                   <span className={styles.itemName}>{item.name}</span>
                   <span className={styles.itemMeta}>{item.stateCount} 状态 · {item.agents.length} Agent</span>
@@ -239,8 +251,6 @@ export function Workbench(props: WorkbenchProps): JSX.Element {
             {tab === 'templates' && template ? (
               <TemplateDetail
                 template={template}
-                values={values}
-                setValues={setValues}
                 workspacePath={workspaces[0]?.path ?? ''}
                 submit={submit}
                 instantiateForEdit={instantiateForEdit}
@@ -275,21 +285,11 @@ export function Workbench(props: WorkbenchProps): JSX.Element {
 
 function TemplateDetail(props: {
   template: StateTemplateDto
-  values: Record<string, string>
-  setValues: (next: Record<string, string>) => void
   workspacePath: string
   submit: (text: string) => Promise<void>
   instantiateForEdit: (templateId: string, values: Record<string, string>, workspacePath: string, fileName: string) => void
 }): JSX.Element {
-  const { template, values } = props
-  const set = (id: string, value: string): void => props.setValues({ ...values, [id]: value })
-  const paramFlags = template.parameters
-    .filter((parameter) => values[parameter.id] !== undefined && values[parameter.id] !== '')
-    .map((parameter) => `--param ${parameter.id}=${values[parameter.id]}`)
-    .join(' ')
-  const missing = template.parameters
-    .filter((parameter) => parameter.required && (values[parameter.id] === undefined || values[parameter.id] === ''))
-    .map((parameter) => parameter.label)
+  const { template } = props
   return (
     <div className={styles.detail}>
       <h2 className={styles.detailTitle}>
@@ -310,84 +310,22 @@ function TemplateDetail(props: {
           </li>
         ))}
       </ol>
-      <h3 className={styles.sectionTitle}>参数（均可留空）</h3>
-      <p className={styles.formHint}>创建时只固化你填写的值；留空的参数会在每次启动工作流时询问。</p>
-      <div className={styles.form}>
-        {template.parameters.map((parameter) => (
-          <ParameterField key={parameter.id} parameter={parameter} value={values[parameter.id] ?? ''} onChange={(value) => { set(parameter.id, value) }} />
-        ))}
-      </div>
-      {missing.length > 0 ? <p className={styles.formHint}>运行时将询问：{missing.join('、')}</p> : null}
+      <p className={styles.formHint}>创建时不填参数：留空的必填参数会在启动工作流时询问。</p>
       <div className={styles.actions}>
-        <button type="button" className={styles.primary} onClick={() => { void props.submit(`/workflow run ${template.id} ${paramFlags}`) }}>
+        <button type="button" className={styles.primary} onClick={() => { void props.submit(`/workflow run ${template.id}`) }}>
           直接运行
         </button>
         <button
           type="button"
           className={styles.secondary}
           onClick={() => {
-            props.instantiateForEdit(template.id, values, props.workspacePath, `${template.id}.yaml`)
+            props.instantiateForEdit(template.id, {}, props.workspacePath, `${template.id}.yaml`)
           }}
         >
           创建并编排
         </button>
       </div>
     </div>
-  )
-}
-
-function ParameterField(props: {
-  parameter: StateParameterDto
-  value: string
-  onChange: (value: string) => void
-}): JSX.Element {
-  const { parameter, value, onChange } = props
-  if (parameter.type === 'enum' && parameter.options) {
-    return (
-      <label className={styles.field}>
-        <span className={styles.label}>
-          {parameter.label}
-          {parameter.required ? <span className={styles.required}>*</span> : null}
-        </span>
-        <select value={value} onChange={(event) => { onChange(event.target.value) }}>
-          <option value="">请选择</option>
-          {parameter.options.map((option) => (
-            <option key={option.value} value={option.value}>{option.label}</option>
-          ))}
-        </select>
-      </label>
-    )
-  }
-  if (parameter.type === 'boolean') {
-    return (
-      <label className={styles.field}>
-        <span className={styles.label}>{parameter.label}</span>
-        <select value={value} onChange={(event) => { onChange(event.target.value) }}>
-          <option value="true">是</option>
-          <option value="false">否</option>
-        </select>
-      </label>
-    )
-  }
-  if (parameter.type === 'text') {
-    return (
-      <label className={styles.field}>
-        <span className={styles.label}>
-          {parameter.label}
-          {parameter.required ? <span className={styles.required}>*</span> : null}
-        </span>
-        <textarea rows={3} value={value} placeholder={parameter.description ?? ''} onChange={(event) => { onChange(event.target.value) }} />
-      </label>
-    )
-  }
-  return (
-    <label className={styles.field}>
-      <span className={styles.label}>
-        {parameter.label}
-        {parameter.required ? <span className={styles.required}>*</span> : null}
-      </span>
-      <input type="text" value={value} placeholder={parameter.description ?? ''} onChange={(event) => { onChange(event.target.value) }} />
-    </label>
   )
 }
 
@@ -398,14 +336,29 @@ function WorkflowDetail(props: {
   onEdit: (fileName: string) => void
 }): JSX.Element {
   const { workflow } = props
+  const [inputs, setInputs] = useState<Record<string, string>>({})
+  const set = (id: string, value: string): void => { setInputs({ ...inputs, [id]: value }) }
+  const fields = workflow.taskFields
+  const filled = Object.entries(inputs).filter(([, value]) => value.trim() !== '')
+  const paramFlags = filled.map(([id, value]) => `--param ${id}=${value}`).join(' ')
   return (
     <div className={styles.detail}>
       <h2 className={styles.detailTitle}>{workflow.name}</h2>
       <p className={styles.detailDesc}>
         {workflow.fileName} · {workflow.stateCount} 状态 / {workflow.stepCount} 步 · {workflow.source === 'project' ? '项目' : '个人'}
       </p>
+      {fields.length > 0 ? (
+        <>
+          <h3 className={styles.sectionTitle}>运行参数（留空会在运行时询问）</h3>
+          <div className={styles.form}>
+            {fields.map((field) => (
+              <TaskField key={field.id} field={field} value={inputs[field.id] ?? ''} onChange={(value) => { set(field.id, value) }} />
+            ))}
+          </div>
+        </>
+      ) : null}
       <div className={styles.actions}>
-        <button type="button" className={styles.primary} onClick={() => { void props.submit(`/workflow run ${workflow.fileName}`) }}>
+        <button type="button" className={styles.primary} onClick={() => { void props.submit(`/workflow run ${workflow.fileName} ${paramFlags}`) }}>
           运行
         </button>
         <button type="button" className={styles.secondary} onClick={() => { props.onEdit(workflow.fileName) }}>
@@ -416,6 +369,137 @@ function WorkflowDetail(props: {
         </button>
       </div>
     </div>
+  )
+}
+
+/** One run-time input field of a workflow instance. */
+function TaskField(props: {
+  field: StateWorkflowDto['taskFields'][number]
+  value: string
+  onChange: (value: string) => void
+}): JSX.Element {
+  const { field, value, onChange } = props
+  const placeholder = field.placeholder || field.description || ''
+  if (field.type === 'textarea') {
+    return (
+      <label className={styles.field}>
+        <span className={styles.label}>
+          {field.label}
+          {field.required ? <span className={styles.required}>*</span> : null}
+        </span>
+        <textarea rows={4} value={value} placeholder={placeholder} onChange={(event) => { onChange(event.target.value) }} />
+      </label>
+    )
+  }
+  return (
+    <label className={styles.field}>
+      <span className={styles.label}>
+        {field.label}
+        {field.required ? <span className={styles.required}>*</span> : null}
+      </span>
+      <input type="text" value={value} placeholder={placeholder} onChange={(event) => { onChange(event.target.value) }} />
+    </label>
+  )
+}
+
+interface TopologyNodeData extends Record<string, unknown> {
+  name: string
+  isInitial: boolean
+  isFinal: boolean
+  verdict: string | null
+  current: boolean
+}
+
+function TopologyNode(props: NodeProps<Node<TopologyNodeData>>): JSX.Element {
+  const { data } = props
+  return (
+    <div
+      className={styles.topologyNode}
+      data-verdict={data.verdict ?? 'pending'}
+      data-current={data.current ? 'true' : 'false'}
+    >
+      <Handle type="target" position={Position.Left} />
+      {data.current ? <span className={styles.topologyRunning}>执行中</span> : null}
+      {data.isInitial ? <span className={styles.topologyBadge}>初始</span> : null}
+      {data.isFinal ? <span className={styles.topologyBadgeFinal}>终止</span> : null}
+      <span className={styles.topologyName}>{data.name}</span>
+      {data.verdict ? (
+        <span className={styles.topologyVerdict}>
+          {data.verdict === 'success' || data.verdict === 'pass' ? '✓' : data.verdict === 'fail' ? '✗' : '?'}
+        </span>
+      ) : null}
+      <Handle type="source" position={Position.Right} />
+    </div>
+  )
+}
+
+const topologyNodeTypes = { topologyState: TopologyNode }
+
+/** Static state diagram of one run: outcomes color the nodes, the executed path highlights the edges. */
+function RunTopology(props: { run: StateRunDto }): JSX.Element | null {
+  const { run } = props
+  const topology = run.topology
+  const nodes = useMemo<Node<TopologyNodeData>[]>(() => {
+    if (!topology) return []
+    const verdictByState = new Map(run.states.map((item) => [item.state, item.verdict]))
+    return topology.states.map((state, index) => ({
+      id: state.name,
+      type: 'topologyState',
+      position: state.position ?? { x: (index % 4) * 230, y: Math.floor(index / 4) * 140 },
+      data: {
+        name: state.name,
+        isInitial: state.isInitial,
+        isFinal: state.isFinal,
+        verdict: verdictByState.get(state.name) ?? null,
+        current: state.name === run.currentState && ACTIVE_RUN_STATUSES.has(run.status),
+      },
+    }))
+  }, [topology, run])
+  const edges = useMemo<Edge[]>(() => {
+    if (!topology) return []
+    // Executed path: adjacent states in execution order.
+    const sequence = run.states.map((item) => item.state)
+    const taken = new Set<string>()
+    for (let i = 0; i + 1 < sequence.length; i += 1) {
+      taken.add(`${sequence[i]}→${sequence[i + 1]}`)
+    }
+    return topology.transitions.map((transition, index) => {
+      const isTaken = taken.has(`${transition.from}→${transition.to}`)
+      const base = transition.verdict ? (EDGE_COLORS[transition.verdict] ?? '#6b7280') : '#6b7280'
+      return {
+        id: `t-${transition.from}-${transition.to}-${index}`,
+        source: transition.from,
+        target: transition.to,
+        label: transition.label ?? transition.verdict ?? '',
+        style: { stroke: base, strokeWidth: isTaken ? 3 : 1.5, opacity: isTaken ? 1 : 0.4 },
+        labelStyle: { fill: '#e5e7eb', fontSize: 10, fontWeight: 600 },
+        labelBgStyle: { fill: '#1f2937', fillOpacity: 0.95 },
+        labelBgPadding: [6, 3] as [number, number],
+        labelBgBorderRadius: 6,
+      }
+    })
+  }, [topology, run])
+  if (!topology) return null
+  return (
+    <>
+      <h3 className={styles.sectionTitle}>运行拓扑（{topology.states.length} 状态，执行过的路径加亮）</h3>
+      <div className={styles.topologyBox}>
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={topologyNodeTypes}
+          fitView
+          nodesDraggable={false}
+          nodesConnectable={false}
+          elementsSelectable={false}
+          zoomOnScroll={false}
+          panOnDrag
+        >
+          <Background variant={BackgroundVariant.Dots} gap={18} size={1.2} />
+          <Controls showInteractive={false} />
+        </ReactFlow>
+      </div>
+    </>
   )
 }
 
@@ -439,6 +523,7 @@ function RunDetail(props: {
         <div className={styles.progressFill} style={{ width: `${progress}%` }} />
       </div>
       {run.error ? <p className={styles.errorText}>{run.error}</p> : null}
+      <RunTopology run={run} />
       <h3 className={styles.sectionTitle}>状态时间线</h3>
       <ol className={styles.runTimeline}>
         {run.states.map((stateItem) => (

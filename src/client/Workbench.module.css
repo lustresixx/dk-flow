@@ -262,7 +262,7 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-width: 560px;
+  max-width: 720px;
 }
 
 .field {
@@ -341,6 +341,85 @@
   color: #a7adb8;
   font-size: 13px;
   margin: 4px 0 10px;
+}
+
+.topologyBox {
+  height: 320px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 16px;
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.topologyNode {
+  min-width: 150px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #23252e;
+  border: 1.5px solid #3f4257;
+  color: #e5e7eb;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+}
+
+.topologyNode[data-verdict='success'],
+.topologyNode[data-verdict='pass'] {
+  border-color: #34d399;
+  background: #11301f;
+}
+
+.topologyNode[data-verdict='fail'] {
+  border-color: #f87171;
+  background: #341a1a;
+}
+
+.topologyNode[data-verdict='conditional_pass'] {
+  border-color: #fbbf24;
+  background: #332a12;
+}
+
+.topologyNode[data-current='true'] {
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 4px rgba(96, 165, 250, 0.22), 0 4px 14px rgba(0, 0, 0, 0.4);
+}
+
+.topologyName {
+  font-size: 13px;
+}
+
+.topologyBadge,
+.topologyBadgeFinal,
+.topologyRunning {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.topologyBadge {
+  background: rgba(52, 211, 153, 0.18);
+  color: #6ee7b7;
+}
+
+.topologyBadgeFinal {
+  background: rgba(251, 191, 36, 0.18);
+  color: #fcd34d;
+}
+
+.topologyRunning {
+  background: rgba(96, 165, 250, 0.2);
+  color: #93c5fd;
+}
+
+.topologyVerdict {
+  font-size: 12px;
+  color: #9a9ab0;
 }
 
 .progressTrack {

@@ -151,8 +151,52 @@ export function apply(ctx: Context, config: Config): void {
           const [agents, templates, runsByWorkspace, workflowsByWorkspace] = await Promise.all([
             aceHarness.listAgents(),
             aceHarness.listTemplates(),
-            Promise.all(roots.map(async (w) => ({ path: w.path, runs: await aceHarness.listRuns(w.path) }))),
-            Promise.all(roots.map(async (w) => ({ path: w.path, workflows: await aceHarness.listWorkflows(w.path) }))),
+            Promise.all(roots.map(async (w) => ({
+              path: w.path,
+              runs: await Promise.all(
+                (await aceHarness.listRuns(w.path)).map(async (run) => {
+                  // Attach the workflow topology so the UI can render the
+                  // state diagram with per-state outcomes.
+                  let topology: {
+                    states: { name: string; isInitial: boolean; isFinal: boolean; position: { x: number; y: number } | null }[]
+                    transitions: { from: string; to: string; verdict: string | null; label: string | null }[]
+                  } | null = null
+                  try {
+                    const resolved = await aceHarness.resolveWorkflowConfig(w.path, run.configFile)
+                    if (resolved) {
+                      topology = {
+                        states: resolved.config.workflow.states.map((state) => ({
+                          name: state.name,
+                          isInitial: state.isInitial,
+                          isFinal: state.isFinal,
+                          position: state.position ?? null,
+                        })),
+                        transitions: resolved.config.workflow.states.flatMap((state) =>
+                          state.transitions.map((transition) => ({
+                            from: state.name,
+                            to: transition.to,
+                            verdict: transition.condition.verdict ?? null,
+                            label: transition.label ?? null,
+                          })),
+                        ),
+                      }
+                    }
+                  } catch {
+                    // Unreadable workflow config: the run detail renders without a diagram.
+                  }
+                  return { run, topology }
+                }),
+              ),
+            }))),
+            Promise.all(roots.map(async (w) => ({
+              path: w.path,
+              workflows: await Promise.all(
+                (await aceHarness.listWorkflows(w.path)).map(async (entry) => {
+                  const loaded = await aceHarness.loadWorkflowConfig(w.path, entry.fileName)
+                  return { entry, taskFields: loaded?.config.context?.taskInput?.fields ?? [] }
+                }),
+              ),
+            }))),
           ])
         const body = JSON.stringify({
           agents: agents.map((agent) => ({
@@ -189,7 +233,7 @@ export function apply(ctx: Context, config: Config): void {
           workspaces: runsByWorkspace.map((entry, index) => ({
             path: entry.path,
             title: roots[index]?.workspace ?? entry.path,
-            runs: entry.runs.map((run) => ({
+            runs: entry.runs.map(({ run, topology }) => ({
               runId: run.id,
               workflowName: run.workflowName,
               status: run.status,
@@ -199,6 +243,7 @@ export function apply(ctx: Context, config: Config): void {
               error: run.error,
               startedAt: run.startedAt,
               finishedAt: run.finishedAt,
+              topology,
               states: run.stateOutcomes.map((outcome) => ({
                 state: outcome.state,
                 verdict: outcome.verdict.verdict,
@@ -216,12 +261,20 @@ export function apply(ctx: Context, config: Config): void {
                 })),
               })),
             })),
-            workflows: workflowsByWorkspace[index]?.workflows.map((w) => ({
+            workflows: workflowsByWorkspace[index]?.workflows.map(({ entry: w, taskFields }) => ({
               fileName: w.fileName,
               name: w.summary.name,
               source: w.source,
               stateCount: w.summary.stateCount,
               stepCount: w.summary.stepCount,
+              taskFields: taskFields.map((field) => ({
+                id: field.id,
+                label: field.label,
+                type: field.type ?? 'text',
+                required: field.required ?? false,
+                placeholder: field.placeholder ?? '',
+                description: field.description ?? '',
+              })),
             })) ?? [],
           })),
         })

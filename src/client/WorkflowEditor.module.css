@@ -64,7 +64,8 @@
 }
 
 .inspector {
-  width: 340px;
+  width: 440px;
+  max-width: 46vw;
   border-left: 1px solid var(--dsw-border, #3c3f4a);
   overflow-y: auto;
   background: var(--dsw-surface-raised, #2a2c36);
@@ -115,9 +116,11 @@
   border-radius: 8px;
   background: var(--dsw-surface, #23252e);
   color: var(--dsw-text, #e6e6ee);
-  padding: 6px 8px;
-  font-size: 13px;
+  padding: 8px 10px;
+  font-size: 14px;
   font-family: inherit;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .checkRow {
@@ -177,13 +180,18 @@
 
 .stepFoot {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   align-items: center;
 }
 
 .stepFoot input {
-  flex: 1;
-  min-width: 0;
+  flex: 1 1 calc(50% - 6px);
+  min-width: 150px;
+}
+
+.stepFoot input:first-child {
+  flex: 1 1 100%;
 }
 
 .stepFoot button,
