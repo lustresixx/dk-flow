@@ -26,12 +26,10 @@ import {
   type BuiltinWorkflowTemplate,
 } from './catalog/index.js'
 import { parseWorkflowYaml, summarizeWorkflow, validateWorkflowReferences, type WorkflowSummary } from './dsl/load.js'
-import type { AgentDefinition, StateMachineState, StepType, StepVerdict, WorkflowConfig, WorkflowStep } from './dsl/types.js'
-import { buildStepEvidence } from './engine/prompts.js'
-import { evaluateTransitions, joinSegment, segmentSteps } from './engine/transitions.js'
-import type { RunState, StepContext, StepExecutor, StepOutcome } from './engine/types.js'
-import { runScriptFile } from './engine/script-file-runner.js'
-import { runScriptNode } from './engine/script-runner.js'
+import type { AgentDefinition, StepType, StepVerdict, WorkflowConfig } from './dsl/types.js'
+import { executeStateStep, executeStateSteps, joinStateVerdict, type StateStepOptions } from './engine/state-steps.js'
+import { evaluateTransitions } from './engine/transitions.js'
+import type { RunState, StepExecutor, StepOutcome } from './engine/types.js'
 import { workspaceRoot } from './store/paths.js'
 import { listRunStates, loadRunState } from './store/run-store.js'
 import { SqliteArchive, type ArchivedAuditRow, type ArchivedRunRow } from './store/sqlite-archive.js'
@@ -245,6 +243,59 @@ export default class AceHarnessService extends Service {
     }
   }
 
+  /**
+   * Engine options slice for isolated verification: the same step execution
+   * the runner drives (P0-3), bound to the shared test sandbox. Without a
+   * live parent session, agent/subworkflow steps fail with a readable hint.
+   */
+  private testStepOptions(input: {
+    parent?: Agent
+    signal: AbortSignal
+    config: WorkflowConfig
+    workspace: string
+    sandboxDir: string
+    stateName: string
+  }): StateStepOptions {
+    const executor = this.makeExecutor(
+      input.workspace,
+      (input.parent ?? { options: {} }) as Agent,
+      `test-${Date.now()}`,
+      1,
+    )
+    if (input.parent) {
+      return {
+        config: input.config,
+        parent: input.parent,
+        signal: input.signal,
+        executor,
+        scriptsHome: join(input.workspace, this.config.runDirName, 'scripts'),
+        pythonCommand: this.config.pythonCommand,
+        sandboxDir: input.sandboxDir,
+      }
+    }
+    const needsSession = (type: string, stepName: string): Error =>
+      new Error(
+        `「${type}」步骤的独立验证需要会话上下文：请在会话中用 /workflow test <工作流> ${input.stateName} ${stepName} 验证`,
+      )
+    return {
+      config: input.config,
+      parent: { options: {} } as Agent,
+      signal: input.signal,
+      executor: {
+        ...executor,
+        runAgentStep: async (stepInput) => {
+          throw needsSession('agent', stepInput.stepName)
+        },
+        runSubworkflowStep: async (stepInput) => {
+          throw needsSession('subworkflow', stepInput.stepName)
+        },
+      },
+      scriptsHome: join(input.workspace, this.config.runDirName, 'scripts'),
+      pythonCommand: this.config.pythonCommand,
+      sandboxDir: input.sandboxDir,
+    }
+  }
+
   /** Result of verifying one workflow step in isolation. */
   async testStep(input: {
     parent?: Agent
@@ -262,34 +313,25 @@ export default class AceHarnessService extends Service {
     const requirements = input.values.requirements ?? input.config.context?.requirements ?? ''
     const sandboxDir = join(input.workspace, this.config.runDirName, 'test-sandbox')
     if ((step.type ?? 'agent') === 'script') this.ensureTestSandbox(sandboxDir)
-    const executor = this.makeExecutor(input.workspace, (input.parent ?? { options: {} }) as Agent, `test-${Date.now()}`, 1)
-    return this.executeTestStep({
+    const outcome = await executeStateStep({
+      options: this.testStepOptions({ ...input, sandboxDir }),
       machineState,
       step,
-      executor,
-      parent: input.parent,
-      signal: input.signal,
-      timeoutMs: step.timeoutMinutes !== undefined ? step.timeoutMinutes * 60_000 : undefined,
-      sandboxDir,
-      workspace: input.workspace,
-      stepContext: {
-        state: machineState.name,
-        stateDescription: machineState.description ?? '',
-        requirements,
-        projectRoot: input.config.context?.projectRoot,
-        priorStateEvidence: '',
-        priorStepEvidence: '（无本状态前置步骤产出）',
-        stepData: {},
-      },
-      scriptInput: {
-        requirements,
-        state: machineState.name,
-        priorStepEvidence: '',
-        priorStateEvidence: '',
+      run: {
+        stateOutcomes: [],
+        context: { requirements, projectRoot: input.config.context?.projectRoot },
         inputs: input.values,
-        stepData: {},
       },
+      completedSteps: [],
     })
+    return {
+      state: machineState.name,
+      step: step.name,
+      type: step.type ?? 'agent',
+      outputSummary: outcome.outputSummary,
+      verdict: outcome.verdict ?? null,
+      data: outcome.data,
+    }
   }
 
   /**
@@ -320,81 +362,51 @@ export default class AceHarnessService extends Service {
       result.error = '该状态没有声明任何步骤，无法验证'
       return result
     }
-    if (machineState.reviewPolicy?.mode === 'adversarial') {
-      notes.push('对抗评审（reviewPolicy: adversarial）在独立验证中不展开，按声明的步骤原样执行')
-    }
     if (machineState.steps.some((step) => step.parallelGroup)) {
       notes.push('并行组在独立验证中按声明顺序串行执行（真实运行为并发）')
     }
     const requirements = input.values.requirements ?? input.config.context?.requirements ?? ''
     const sandboxDir = join(input.workspace, this.config.runDirName, 'test-sandbox')
     if (machineState.steps.some((step) => (step.type ?? 'agent') === 'script')) this.ensureTestSandbox(sandboxDir)
-    const executor = this.makeExecutor(input.workspace, (input.parent ?? { options: {} }) as Agent, `test-${Date.now()}`, 1)
     const completed: StepOutcome[] = []
-    const collectData = (): Record<string, unknown> => {
-      const collected: Record<string, unknown> = {}
-      for (const outcome of completed) {
-        if (outcome.data !== undefined) collected[`${outcome.state}/${outcome.step}`] = outcome.data
-      }
-      return collected
-    }
-    for (const step of machineState.steps) {
-      const type: StepType = step.type ?? 'agent'
-      try {
-        const outcome = await this.executeTestStep({
-          machineState,
-          step,
-          executor,
-          parent: input.parent,
-          signal: input.signal,
-          timeoutMs: step.timeoutMinutes !== undefined ? step.timeoutMinutes * 60_000 : undefined,
-          sandboxDir,
-          workspace: input.workspace,
-          stepContext: {
-            state: machineState.name,
-            stateDescription: machineState.description ?? '',
-            requirements,
-            projectRoot: input.config.context?.projectRoot,
-            priorStateEvidence: '',
-            priorStepEvidence: buildStepEvidence(completed),
-            stepData: collectData(),
+    try {
+      await executeStateSteps(
+        this.testStepOptions({ ...input, sandboxDir }),
+        machineState,
+        {
+          stateOutcomes: [],
+          context: { requirements, projectRoot: input.config.context?.projectRoot },
+          inputs: input.values,
+          completedSteps: completed,
+        },
+        {
+          sequential: true,
+          onStepFinished: async (done) => {
+            result.steps = done.map((outcome) => ({
+              step: outcome.step,
+              type: outcome.type,
+              verdict: outcome.verdict ?? null,
+              outputSummary: outcome.outputSummary,
+            }))
           },
-          scriptInput: {
-            requirements,
-            state: machineState.name,
-            priorStepEvidence: buildStepEvidence(completed),
-            priorStateEvidence: '',
-            inputs: input.values,
-            stepData: collectData(),
-          },
-        })
-        const now = new Date().toISOString()
-        completed.push({
-          key: `${machineState.name}/${step.name}`,
-          state: machineState.name,
-          step: step.name,
-          type,
-          role: type === 'script' ? 'neutral' : (step.role ?? 'neutral'),
-          outputSummary: outcome.outputSummary,
-          ...(outcome.verdict ? { verdict: outcome.verdict } : {}),
-          ...(outcome.data !== undefined ? { data: outcome.data } : {}),
-          startedAt: now,
-          finishedAt: now,
-        })
-        result.steps.push({ step: step.name, type, verdict: outcome.verdict, outputSummary: outcome.outputSummary })
-      } catch (error) {
-        const message = (error as Error).message
-        result.steps.push({ step: step.name, type, verdict: null, outputSummary: `执行出错：${message}` })
-        result.error = `步骤「${step.name}」执行出错，后续步骤未执行：${message}`
-        return result
-      }
+        },
+      )
+    } catch (error) {
+      const message = (error as Error).message
+      // Sequential execution: the failing step is the first not yet completed.
+      const failing = machineState.steps[completed.length]
+      const type: StepType = failing?.type ?? 'agent'
+      result.steps.push({
+        step: failing?.name ?? '',
+        type,
+        verdict: null,
+        outputSummary: `执行出错：${message}`,
+      })
+      result.error = `步骤「${failing?.name ?? ''}」执行出错，后续步骤未执行：${message}`
+      return result
     }
-    // Mirror executeState: the last segment's verdict, joined by state policy.
-    const segments = segmentSteps(machineState.steps)
-    const lastSegment = segments[segments.length - 1]!
-    const lastOutcomes = completed.filter((step) => lastSegment.steps.includes(step.step))
-    const pass: StepVerdict = { verdict: 'pass', issues: [], rationale: '' }
-    const joined = joinSegment(lastOutcomes.map((step) => step.verdict ?? pass), machineState.joinPolicy ?? { mode: 'all' }) ?? pass
+    // Same join as executeState: the last segment's verdict, by state policy.
+    const joined = joinStateVerdict(machineState, completed)
     result.verdict = joined
     if (machineState.isFinal) {
       notes.push('终止状态不发生转移')
@@ -404,123 +416,6 @@ export default class AceHarnessService extends Service {
       if (!matched) notes.push('没有匹配的转移：真实运行会在此暂停并等待人工决策')
     }
     return result
-  }
-
-  /** Execute one step for an isolated test (shared by testStep/testState). */
-  private async executeTestStep(input: {
-    machineState: StateMachineState
-    step: WorkflowStep
-    executor: StepExecutor
-    parent: Agent | undefined
-    signal: AbortSignal
-    timeoutMs: number | undefined
-    sandboxDir: string
-    workspace: string
-    stepContext: StepContext
-    scriptInput: {
-      requirements: string
-      state: string
-      priorStepEvidence: string
-      priorStateEvidence: string
-      inputs: Record<string, string>
-      stepData: Record<string, unknown>
-    }
-  }): Promise<TestStepResult> {
-    const { machineState, step } = input
-    const type: StepType = step.type ?? 'agent'
-    const role = step.role ?? 'neutral'
-    if (type === 'script') {
-      this.ensureTestSandbox(input.sandboxDir)
-      const result =
-        step.scriptFile?.trim() !== undefined && step.scriptFile.trim() !== ''
-          ? await runScriptFile(step.scriptFile.trim(), input.scriptInput, {
-              projectRoot: input.stepContext.projectRoot,
-              scriptsHome: join(input.workspace, this.config.runDirName, 'scripts'),
-              pythonCommand: this.config.pythonCommand,
-              timeoutMs: input.timeoutMs,
-              sandboxDir: input.sandboxDir,
-              signal: input.signal,
-            })
-          : await runScriptNode(step.script ?? '', input.scriptInput, { timeoutMs: input.timeoutMs, signal: input.signal })
-      return {
-        state: machineState.name,
-        step: step.name,
-        type,
-        outputSummary: result.output,
-        verdict: result.success
-          ? { verdict: 'success', issues: [], rationale: result.output }
-          : { verdict: 'fail', issues: [], rationale: result.error ?? result.output },
-        data: result.data,
-      }
-    }
-    if (type === 'llm') {
-      // The bare llm call only reads `parent.options` for routing defaults.
-      const parent = (input.parent ?? { options: {} }) as Agent
-      const result = await input.executor.runLlmStep({
-        stepName: step.name,
-        role,
-        task: step.task ?? '',
-        agentName: step.agent,
-        constraints: step.constraints ?? [],
-        model: step.model,
-        ctx: input.stepContext,
-        parent,
-        signal: input.signal,
-        timeoutMs: input.timeoutMs,
-      })
-      return {
-        state: machineState.name,
-        step: step.name,
-        type,
-        outputSummary: result.outputSummary,
-        verdict: result.verdict ?? null,
-        data: undefined,
-      }
-    }
-    if (!input.parent) {
-      throw new Error(
-        `「${type}」步骤的独立验证需要会话上下文：请在会话中用 /workflow test <工作流> ${machineState.name} ${step.name} 验证`,
-      )
-    }
-    if (type === 'agent') {
-      const result = await input.executor.runAgentStep({
-        stepName: step.name,
-        agentName: step.agent ?? '',
-        agentSystemPrompt: '',
-        role,
-        task: step.task ?? '',
-        constraints: step.constraints ?? [],
-        preCommands: step.preCommands ?? [],
-        ctx: input.stepContext,
-        parent: input.parent,
-        signal: input.signal,
-        timeoutMs: input.timeoutMs,
-      })
-      return {
-        state: machineState.name,
-        step: step.name,
-        type,
-        outputSummary: result.outputSummary,
-        verdict: result.verdict ?? null,
-        data: undefined,
-      }
-    }
-    const configFile = step.workflow?.trim() || step.subworkflow?.configFile?.trim() || ''
-    const child = await input.executor.runSubworkflowStep({
-      stepName: step.name,
-      configFile,
-      parent: input.parent,
-      signal: input.signal,
-      inheritedRequirements: input.stepContext.requirements,
-    })
-    return {
-      state: machineState.name,
-      step: step.name,
-      type,
-      outputSummary: child.verdict?.rationale ?? `子工作流结束：${child.outcome}`,
-      verdict: child.verdict ?? null,
-      data: undefined,
-    }
   }
 
   /** Create the test sandbox directory (best effort). */
