@@ -128,29 +128,36 @@ function extractScore(text: string): { score: number | null; advice: string } {
   return { score: null, advice: text }
 }
 
-/** ACE catalog tool names mapped onto DSH tool names. */
-const ACE_TOOL_MAP: Record<string, string> = {
-  Bash: 'bash',
-  Read: 'read',
-  Write: 'write',
-  Edit: 'edit',
-  Glob: 'glob',
-  Grep: 'glob',
-  WebSearch: 'web_search',
-  WebFetch: 'web_fetch',
+/** ACE catalog tool names mapped onto DSH tool names (candidates in order). */
+const ACE_TOOL_MAP: Record<string, readonly string[]> = {
+  Bash: ['bash', 'pwsh'],
+  Read: ['read'],
+  Write: ['write'],
+  Edit: ['edit'],
+  Glob: ['glob', 'grep'],
+  Grep: ['grep', 'glob'],
+  WebSearch: ['web_search'],
+  WebFetch: ['web_fetch'],
 }
 
 /**
  * Translate an ACE agent's allowedTools roster into a DSH tool allow-list.
- * Unknown ACE names are skipped (they have no DSH counterpart); an empty
+ * Each ACE name resolves to the first DSH candidate that `isAvailable`
+ * reports — deployments differ, e.g. Windows profiles register `pwsh`
+ * instead of `bash`. Unmapped or unavailable names are skipped; an empty
  * result means no filter.
  */
-export function toolFilterFor(allowedTools: readonly string[] | undefined): ToolRestriction | undefined {
+export function toolFilterFor(
+  allowedTools: readonly string[] | undefined,
+  isAvailable: (name: string) => boolean = () => true,
+): ToolRestriction | undefined {
   if (!allowedTools || allowedTools.length === 0) return undefined
   const allow = new Set<string>()
   for (const name of allowedTools) {
-    const mapped = ACE_TOOL_MAP[name]
-    if (mapped) allow.add(mapped)
+    const candidates = ACE_TOOL_MAP[name]
+    if (!candidates) continue
+    const resolved = candidates.find(isAvailable)
+    if (resolved) allow.add(resolved)
   }
   return allow.size > 0 ? { allow: [...allow] } : undefined
 }
@@ -644,7 +651,9 @@ export default class AceHarnessService extends Service {
           agentOptions: service.config.model ? { model: service.config.model } : undefined,
           outputSchema: wantsSchema ? VERDICT_OUTPUT_SCHEMA : undefined,
           toolFilter:
-            providerCaps?.toolFilter === true ? toolFilterFor(agentDef?.allowedTools) : undefined,
+            providerCaps?.toolFilter === true
+              ? toolFilterFor(agentDef?.allowedTools, (name) => service.ctx.tools.get(name) !== undefined)
+              : undefined,
         }
         service.ctx.emit('ace/step-start', {
           runId: parentRunId,
