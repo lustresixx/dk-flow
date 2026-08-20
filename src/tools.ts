@@ -11,8 +11,12 @@ import type AceHarnessService from './service.js'
 import type { RunState } from './engine/types.js'
 import type { WorkflowConfig } from './dsl/types.js'
 
-/** Canonical JSON run projection shared by all tools. */
-function runJson(state: RunState): Record<string, unknown> {
+/**
+ * Canonical JSON run projection shared by all tools. Every field must be
+ * lossless JSON: optional values are null-coalesced because the tool output
+ * contract rejects `undefined`.
+ */
+export function runJson(state: RunState): Record<string, unknown> {
   return {
     runId: state.id,
     workflowName: state.workflowName,
@@ -26,12 +30,13 @@ function runJson(state: RunState): Record<string, unknown> {
       state: outcome.state,
       verdict: outcome.verdict.verdict,
       rationale: outcome.verdict.rationale,
-      supervisorNote: outcome.supervisorNote,
+      supervisorNote: outcome.supervisorNote ?? null,
+      supervisorScore: outcome.supervisorScore ?? null,
       steps: outcome.steps.map((step) => ({
         step: step.step,
-        agent: step.agent,
-        role: step.role,
-        verdict: step.verdict?.verdict,
+        agent: step.agent ?? null,
+        role: step.role ?? null,
+        verdict: step.verdict?.verdict ?? null,
         issues: step.verdict?.issues ?? [],
       })),
     })),
@@ -143,7 +148,11 @@ export function registerTools(ctx: Context, service: AceHarnessService): void {
             .filter((t) => t.id === target)
             .sort((a, b) => a.version.localeCompare(b.version))
             .at(-1)
-          if (!template) throw new Error(`未找到 workflow 实例或模板「${target}」`)
+          if (!template) {
+            throw new Error(
+              `未找到 workflow 实例或模板「${target}」。可用内置模板 id：${templates.map((t) => t.id).join('、') || '无'}。工作区实例需先在工作台从模板创建（注意实例名≠模板名，例如 demo 实例 code-optimization-demo 来自模板 code-optimization-review）。`,
+            )
+          }
           const instantiated = await service.instantiate(target, undefined, values, {})
           workflow = { config: instantiated.config, configFile: target }
         }

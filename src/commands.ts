@@ -276,7 +276,15 @@ async function runWorkflow(
       .filter((t) => t.id === target)
       .sort((a, b) => a.version.localeCompare(b.version))
       .at(-1)
-    if (!template) return err(`未找到 workflow 实例或模板「${target}」`)
+    if (!template) {
+      const templateIds = templates.map((t) => t.id).join('、')
+      return err(
+        `未找到 workflow 实例或模板「${target}」。\n` +
+          `- 工作区实例：先在工作台从模板创建（.dsh/workflows/ 下的文件名），或 /workflow list 查看\n` +
+          `- 内置模板 id：${templateIds || '无'}\n` +
+          `注意实例名≠模板名：例如 demo 实例 code-optimization-demo 来自模板 code-optimization-review（换机器时用模板 id 更可靠）。`,
+      )
+    }
     const missing = (template.manifest.spec.parameters ?? [])
       .filter((p) => p.required && values[p.id] === undefined && p.default === undefined)
       .map((p) => p.label)
