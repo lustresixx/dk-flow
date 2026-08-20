@@ -2,9 +2,10 @@
  * Launcher run-selection logic: which run the panel follows and whether that
  * run is still live. Kept pure for tests; the panel drives it on a poll tick.
  */
+import { ACTIVE_STATUSES } from './run-meta.ts'
 
 /** Statuses that count as "still running" for the live badge. */
-export const ACTIVE_STATUSES = new Set(['preparing', 'running', 'waiting-human'])
+export { ACTIVE_STATUSES } from './run-meta.ts'
 
 /** The run the launcher presents, with its live-ness. */
 export interface RunSelection {

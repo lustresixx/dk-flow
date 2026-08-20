@@ -17,39 +17,14 @@ import {
 } from '@xyflow/react'
 import { EditorPane } from './WorkflowEditor.tsx'
 import { blankWorkflowYaml } from './workflow-model.ts'
+import { ACTIVE_STATUSES, route, STATUS_TEXT, STEP_TYPE_TEXT, VERDICT_TEXT } from './run-meta.ts'
 import type { AceStateDto, StateRunDto, StateTemplateDto, StateWorkflowDto } from './types.ts'
 import styles from './Workbench.module.css'
 
 type Tab = 'templates' | 'workflows' | 'runs'
 
-const STATE_ROUTE = '/plugins/dsh-ace-harness/state'
+const STATE_ROUTE = route('state')
 const LOGO = '/plugins/dsh-ace-harness/assets/ace-logo.png'
-
-const STATUS_TEXT: Record<string, string> = {
-  preparing: '准备中',
-  running: '运行中',
-  'waiting-human': '等待人工决策',
-  completed: '已完成',
-  failed: '失败',
-  stopped: '已停止',
-  crashed: '崩溃',
-}
-
-const VERDICT_TEXT: Record<string, string> = {
-  success: '成功',
-  pass: '成功',
-  fail: '失败',
-  conditional_pass: '有条件通过',
-}
-
-const STEP_TEXT: Record<string, string> = {
-  agent: 'AI',
-  script: '脚本',
-  subworkflow: '子工作流',
-  llm: '快速LLM',
-}
-
-const ACTIVE_RUN_STATUSES = new Set(['preparing', 'running', 'waiting-human'])
 
 /** One archived run row from the SQLite history route. */
 interface ArchivedRunRow {
@@ -441,7 +416,7 @@ function TemplateDetail(props: {
               {stateItem.isInitial ? '▶ ' : ''}{stateItem.name}{stateItem.isFinal ? ' ■' : ''}
             </span>
             <span className={styles.stateSteps}>
-              {stateItem.steps.map((step) => `${step.name}(${step.agent ? step.agent : STEP_TEXT[step.type ?? 'agent']})`).join(' → ')}
+              {stateItem.steps.map((step) => `${step.name}(${step.agent ? step.agent : STEP_TYPE_TEXT[step.type ?? 'agent']})`).join(' → ')}
             </span>
           </li>
         ))}
@@ -655,7 +630,7 @@ function RunTopology(props: { run: StateRunDto }): JSX.Element | null {
         isInitial: state.isInitial,
         isFinal: state.isFinal,
         verdict: verdictByState.get(state.name) ?? null,
-        current: state.name === run.currentState && ACTIVE_RUN_STATUSES.has(run.status),
+        current: state.name === run.currentState && ACTIVE_STATUSES.has(run.status),
       },
     }))
   }, [topology, run])
@@ -748,7 +723,7 @@ function RunDetail(props: {
                   {step.type === 'agent' && step.agent ? (
                     <span className={styles.stepAgent}>{step.agent}</span>
                   ) : (
-                    <span className={styles.stepAgent}>{STEP_TEXT[step.type] ?? step.type}</span>
+                    <span className={styles.stepAgent}>{STEP_TYPE_TEXT[step.type] ?? step.type}</span>
                   )}
                   {step.role ? <span className={styles.stepRole}>{step.role}</span> : null}
                   {step.attempts > 1 ? (
@@ -895,7 +870,7 @@ function ArchiveDetailView(props: {
               {outcome.steps.map((step) => (
                 <li key={step.step} className={styles.stepItem}>
                   <span className={styles.stepName}>{step.step}</span>
-                  <span className={styles.stepAgent}>{STEP_TEXT[step.type] ?? step.type}</span>
+                  <span className={styles.stepAgent}>{STEP_TYPE_TEXT[step.type] ?? step.type}</span>
                   {step.verdict ? (
                     <span className={styles.verdictBadge} data-verdict={step.verdict.verdict}>
                       {VERDICT_TEXT[step.verdict.verdict] ?? step.verdict.verdict}

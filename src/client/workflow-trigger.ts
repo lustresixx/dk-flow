@@ -5,9 +5,10 @@
  * command path (parameter dialog included).
  */
 import type { InputTriggerSource } from '@deepseek-ai/dsh-client-ui-input-trigger/client'
+import { route } from './run-meta.ts'
 import type { AceStateDto } from './types.ts'
 
-const STATE_ROUTE = '/plugins/dsh-ace-harness/state'
+const STATE_ROUTE = route('state')
 
 /** Workflow choices with their run ids, cached briefly. */
 let cache: { entries: { id: string; name: string; kind: string; summary: string }[]; at: number } | null = null

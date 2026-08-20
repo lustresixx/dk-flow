@@ -13,13 +13,13 @@ import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } fr
 import type { ObservableSnapshot, SessionListState } from '@deepseek-ai/dsh-client-runtime/client'
 import { LiveRunPanel } from './LiveRunPanel.tsx'
 import { Workbench } from './Workbench.tsx'
+import { ACTIVE_STATUSES, route } from './run-meta.ts'
 import { selectRun, sessionRuns, type RunSelection, type SelectableRun } from './run-selection.ts'
 import styles from './AcePanel.module.css'
 
 const LOGO = '/plugins/dsh-ace-harness/assets/ace-logo.png'
-const STATE_ROUTE = '/plugins/dsh-ace-harness/state'
+const STATE_ROUTE = route('state')
 
-const ACTIVE_STATUSES = new Set(['preparing', 'running', 'waiting-human'])
 const RECENT_MS = 2 * 60_000
 const LAST_RUN_KEY = 'ace-harness:lastRun'
 

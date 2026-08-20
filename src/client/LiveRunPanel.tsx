@@ -22,10 +22,9 @@ import {
   type NodeProps,
 } from '@xyflow/react'
 import type { StreamSnapshotDto } from './types.ts'
+import { ACTIVE_STATUSES, foldVerdict, route, STATUS_TEXT, STEP_TYPE_TEXT } from './run-meta.ts'
 import styles from './LiveRunPanel.module.css'
 import '@xyflow/react/dist/style.css'
-
-const STREAM_ROUTE = '/plugins/dsh-ace-harness/stream'
 
 /**
  * Root marker announced while the sidebar is expanded (AgentTeams panel
@@ -34,32 +33,6 @@ const STREAM_ROUTE = '/plugins/dsh-ace-harness/stream'
  * viewports keep overlay mode.
  */
 const PANEL_OPEN_ATTRIBUTE = 'data-ace-harness-panel-open'
-
-const STATUS_TEXT: Record<string, string> = {
-  preparing: '准备中',
-  running: '运行中',
-  'waiting-human': '等待人工决策',
-  completed: '已完成',
-  failed: '失败',
-  stopped: '已停止',
-  crashed: '崩溃',
-}
-
-const ACTIVE_STATUSES = new Set(['preparing', 'running', 'waiting-human'])
-
-const STEP_KIND_TEXT: Record<string, string> = {
-  agent: 'AI',
-  script: '脚本',
-  subworkflow: '子工作流',
-  llm: '快速LLM',
-}
-
-/** Legacy verdict spellings fold onto the modern success/fail pair. */
-function normalizeVerdict(verdict: string | null): string | null {
-  if (verdict === 'pass') return 'success'
-  if (verdict === null) return null
-  return verdict
-}
 
 /** Live state node rendered on the mini diagram. */
 interface LiveNodeData extends Record<string, unknown> {
@@ -72,7 +45,7 @@ interface LiveNodeData extends Record<string, unknown> {
 
 function LiveStateNode(props: NodeProps<Node<LiveNodeData>>): JSX.Element {
   const { data } = props
-  const verdict = normalizeVerdict(data.verdict)
+  const verdict = foldVerdict(data.verdict)
   return (
     <div
       className={styles.diagramNode}
@@ -132,7 +105,7 @@ export function LiveRunPanel(props: LiveRunPanelProps): JSX.Element | null {
     let alive = true
     const tick = async (): Promise<void> => {
       try {
-        const response = await fetch(`${STREAM_ROUTE}?runId=${encodeURIComponent(runId)}`, { cache: 'no-store' })
+        const response = await fetch(route('stream', runId), { cache: 'no-store' })
         if (!response.ok) return
         const next = (await response.json()) as StreamSnapshotDto
         if (!alive) return
@@ -192,11 +165,11 @@ export function LiveRunPanel(props: LiveRunPanelProps): JSX.Element | null {
     // verdict color and every sibling branch dims; untouched branches stay
     // neutral. Unconditional edges count as taken once the source ran.
     const verdictByState = new Map(
-      snapshot.verdicts.map((item) => [item.state, normalizeVerdict(item.verdict)]),
+      snapshot.verdicts.map((item) => [item.state, foldVerdict(item.verdict)]),
     )
     return snapshot.transitions.map((transition, index) => {
       const sourceVerdict = verdictByState.get(transition.from) ?? null
-      const edgeVerdict = normalizeVerdict(transition.verdict)
+      const edgeVerdict = foldVerdict(transition.verdict)
       const taken = sourceVerdict !== null && (edgeVerdict === null || edgeVerdict === sourceVerdict)
       const dimmed = sourceVerdict !== null && !taken
       return {
@@ -296,7 +269,7 @@ export function LiveRunPanel(props: LiveRunPanelProps): JSX.Element | null {
                 <div key={entry.key} className={styles.stepLogItem} data-finished={entry.finished ? 'true' : 'false'}>
                   <div className={styles.stepLogHead}>
                     <span className={styles.stepLogName}>{entry.step}</span>
-                    {entry.agent ? <span className={styles.stepLogAgent}>{entry.agent}</span> : <span className={styles.stepLogAgent}>{STEP_KIND_TEXT[entry.type] ?? entry.type}</span>}
+                    {entry.agent ? <span className={styles.stepLogAgent}>{entry.agent}</span> : <span className={styles.stepLogAgent}>{STEP_TYPE_TEXT[entry.type] ?? entry.type}</span>}
                     {entry.role && entry.role !== 'neutral' ? <span className={styles.stepLogRole}>{entry.role}</span> : null}
                     {entry.finished ? <span className={styles.stepLogDone}>完成</span> : <span className={styles.stepLogLive}>输出中…</span>}
                   </div>

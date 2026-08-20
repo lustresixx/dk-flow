@@ -43,19 +43,13 @@ import {
   type TransitionEdge,
 } from './workflow-model.ts'
 import type { StateTransition, WorkflowConfig } from '../dsl/types.js'
+import { STEP_TYPE_TEXT } from './run-meta.ts'
 import styles from './WorkflowEditor.module.css'
 import '@xyflow/react/dist/style.css'
 
 const ROLES = ['', 'defender', 'attacker', 'judge'] as const
 const ISSUE_TYPES = ['design', 'implementation', 'test', 'performance', 'security'] as const
 const SEVERITIES = ['critical', 'major', 'minor'] as const
-
-const STEP_TYPE_TEXT: Record<string, string> = {
-  agent: 'AI',
-  script: '脚本',
-  subworkflow: '子流',
-  llm: '快速LLM',
-}
 
 /** Custom state node rendered on the canvas. */
 function AceStateNode(props: NodeProps<StateNode>): JSX.Element {
