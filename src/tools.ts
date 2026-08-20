@@ -8,7 +8,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { JsonValue } from '@deepseek-ai/dsh-session'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type AceHarnessService from './service.js'
-import { askMissingParameters } from './params-dialog.js'
+import { askMissingParameters, askMissingTaskInputs } from './params-dialog.js'
 import type { RunState } from './engine/types.js'
 import type { WorkflowConfig } from './dsl/types.js'
 
@@ -143,6 +143,23 @@ export function registerTools(ctx: Context, service: AceHarnessService): void {
         const instance = await service.loadWorkflowConfig(workspace, target)
         if (instance) {
           workflow = { config: instance.config, configFile: instance.file }
+          const taskFields = instance.config.context?.taskInput?.fields ?? []
+          const missingFields = taskFields.filter((field) => field.required && values[field.id] === undefined)
+          if (missingFields.length > 0) {
+            const filled = await askMissingTaskInputs(
+              ctx,
+              agent,
+              exec.signal,
+              taskFields,
+              missingFields.map((field) => field.id),
+            )
+            if (!filled) {
+              throw new Error(
+                `实例「${target}」缺少必填参数：${missingFields.map((field) => field.label).join('、')}（当前环境无交互界面，请通过 params 参数提供）`,
+              )
+            }
+            Object.assign(values, filled)
+          }
         } else {
           const templates = await service.listTemplates()
           const template = templates

@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { answersToValues, buildParameterQuestions } from '../src/params-dialog.js'
-import type { WorkflowTemplateManifest } from '../src/dsl/types.js'
+import {
+  answersToValues,
+  buildParameterQuestions,
+  buildTaskInputQuestions,
+  taskInputAnswersToValues,
+} from '../src/params-dialog.js'
+import type { WorkflowTaskInputField, WorkflowTemplateManifest } from '../src/dsl/types.js'
 
 const manifest: WorkflowTemplateManifest = {
   apiVersion: 'aceharness.io/v1alpha1',
@@ -61,5 +66,32 @@ describe('answersToValues', () => {
     const questions = buildParameterQuestions(manifest, ['projectRoot', 'requirements'])
     const values = answersToValues(manifest, questions, [{ id: 'projectRoot', selected: [], custom: 'E:\\proj' }])
     expect(values).toEqual({ projectRoot: 'E:\\proj' })
+  })
+})
+
+const taskFields: WorkflowTaskInputField[] = [
+  { id: 'requirements', label: '输入文本', type: 'text', required: true, placeholder: '任意文字' },
+  { id: 'note', label: '备注', type: 'textarea' },
+]
+
+describe('taskInput questions', () => {
+  it('builds one question per missing required field', () => {
+    const questions = buildTaskInputQuestions(taskFields, ['requirements'])
+    expect(questions).toHaveLength(1)
+    expect(questions[0]!.id).toBe('requirements')
+    expect(questions[0]!.question).toContain('输入文本')
+    expect(questions[0]!.options).toBeUndefined()
+  })
+
+  it('maps custom answers back to values', () => {
+    const questions = buildTaskInputQuestions(taskFields, ['requirements'])
+    const values = taskInputAnswersToValues(questions, [{ id: 'requirements', selected: [], custom: 'hello' }])
+    expect(values).toEqual({ requirements: 'hello' })
+  })
+
+  it('falls back to the selected label and skips unanswered fields', () => {
+    const questions = buildTaskInputQuestions(taskFields, ['requirements', 'note'])
+    const values = taskInputAnswersToValues(questions, [{ id: 'requirements', selected: ['已选标签'] }])
+    expect(values).toEqual({ requirements: '已选标签' })
   })
 })

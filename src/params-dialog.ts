@@ -7,7 +7,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { AskUserQuestionItem } from '@deepseek-ai/dsh-user-questions'
-import type { WorkflowTemplateManifest } from './dsl/types.js'
+import type { WorkflowTaskInputField, WorkflowTemplateManifest } from './dsl/types.js'
 
 /** Build one dialog question per missing parameter. */
 export function buildParameterQuestions(
@@ -77,6 +77,58 @@ export async function askMissingParameters(
   try {
     const answer = await ctx.userQuestions.ask({ questions, agent, signal })
     return answersToValues(manifest, questions, answer.answers)
+  } catch {
+    return null
+  }
+}
+
+/** Build one dialog question per missing taskInput field. */
+export function buildTaskInputQuestions(
+  fields: readonly WorkflowTaskInputField[],
+  missingIds: readonly string[],
+): AskUserQuestionItem[] {
+  const byId = new Map(fields.map((field) => [field.id, field]))
+  return missingIds.map((id) => {
+    const field = byId.get(id)!
+    return {
+      id,
+      header: '工作流参数',
+      question: `请填写「${field.label}」${field.description ? `（${field.description}）` : ''}`,
+    }
+  })
+}
+
+/** Map taskInput dialog answers back to field values. */
+export function taskInputAnswersToValues(
+  questions: readonly AskUserQuestionItem[],
+  answers: readonly { id: string; selected: string[]; custom?: string }[],
+): Record<string, string> {
+  const values: Record<string, string> = {}
+  for (const question of questions) {
+    const answer = answers.find((item) => item.id === question.id)
+    if (!answer) continue
+    const custom = answer.custom ?? ''
+    if (custom !== '') values[question.id] = custom
+    else if (answer.selected[0]) values[question.id] = answer.selected[0]!
+  }
+  return values
+}
+
+/**
+ * Ask the user for missing required taskInput fields of a workflow instance
+ * and return the filled values. Falls back to `null` without an interactive UI.
+ */
+export async function askMissingTaskInputs(
+  ctx: Context,
+  agent: Agent,
+  signal: AbortSignal,
+  fields: readonly WorkflowTaskInputField[],
+  missingIds: readonly string[],
+): Promise<Record<string, string> | null> {
+  const questions = buildTaskInputQuestions(fields, missingIds)
+  try {
+    const answer = await ctx.userQuestions.ask({ questions, agent, signal })
+    return taskInputAnswersToValues(questions, answer.answers)
   } catch {
     return null
   }

@@ -80,3 +80,10 @@ context:
   projectRoot: ""
   workspaceMode: in-place
   requirements: ""
+  taskInput:
+    fields:
+      - id: requirements
+        label: 输入文本
+        type: text
+        required: true
+        placeholder: "任意一段文字，脚本将检查、转换并汇总它"

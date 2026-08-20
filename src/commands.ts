@@ -7,7 +7,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { CommandInvocation, CommandResult } from '@deepseek-ai/dsh-commands'
 import type AceHarnessService from './service.js'
-import { askMissingParameters } from './params-dialog.js'
+import { askMissingParameters, askMissingTaskInputs } from './params-dialog.js'
 import type { RunResult, RunState } from './engine/types.js'
 import type { WorkflowConfig } from './dsl/types.js'
 
@@ -272,6 +272,24 @@ async function runWorkflow(
   const instance = await service.loadWorkflowConfig(workspace, target)
   if (instance) {
     workflow = { config: instance.config, configFile: instance.file }
+    const taskFields = instance.config.context?.taskInput?.fields ?? []
+    const missingFields = taskFields.filter((field) => field.required && values[field.id] === undefined)
+    if (missingFields.length > 0) {
+      const filled = await askMissingTaskInputs(
+        ctx,
+        agent,
+        signal,
+        taskFields,
+        missingFields.map((field) => field.id),
+      )
+      if (!filled) {
+        return err(
+          `实例「${target}」缺少必填参数：${missingFields.map((field) => field.label).join('、')}\n` +
+            `用法：/workflow run ${target}${taskFields.map((field) => ` --param ${field.id}=<${field.label}>`).join('')}`,
+        )
+      }
+      Object.assign(values, filled)
+    }
   } else {
     const templates = await service.listTemplates()
     const template = templates

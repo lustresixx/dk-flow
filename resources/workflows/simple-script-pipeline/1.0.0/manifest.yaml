@@ -15,7 +15,7 @@ spec:
     aceharness: ">=1.0.0-rc.8 <2.0.0"
   parameters:
     - { id: workflowName, label: 工作流名称, type: string, bind: /workflow/name, required: true, default: 简单脚本流水线 }
-    - { id: requirements, label: 输入文本, type: text, bind: /context/requirements, default: "" }
+    - { id: requirements, label: 输入文本, type: text, bind: /context/requirements, required: true }
   dependencies:
     agents: []
     skills: []
