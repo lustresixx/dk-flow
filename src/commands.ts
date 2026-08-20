@@ -7,10 +7,10 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { CommandInvocation, CommandResult } from '@deepseek-ai/dsh-commands'
 import type AceHarnessService from './service.js'
-import { askMissingParameters, askMissingTaskInputs } from './params-dialog.js'
+import { latestTemplate } from './catalog/index.js'
 import { runJsonDto, runResultDto } from './projections.js'
+import { resolveRunTarget } from './run-target.js'
 import type { RunResult, RunState } from './engine/types.js'
-import type { WorkflowConfig } from './dsl/types.js'
 
 const ok = (text: string): CommandResult => ({ kind: 'success', text })
 const err = (text: string): CommandResult => ({ kind: 'error', text })
@@ -236,10 +236,7 @@ async function dispatch(ctx: Context, service: AceHarnessService, invocation: Co
         const templateId = positional[1]
         if (!templateId) return err('用法：/workflow create <templateId> [--file name.yaml] [--param id=value ...] [--save]（参数可留空，运行时询问）')
         const templates = await service.listTemplates()
-        const template = templates
-          .filter((t) => t.id === templateId)
-          .sort((a, b) => a.version.localeCompare(b.version))
-          .at(-1)
+        const template = latestTemplate(templates, templateId)
         if (!template) return err(`未找到模板「${templateId}」`)
         const values: Record<string, unknown> = {}
         for (const [key, list] of flags) {
@@ -350,67 +347,33 @@ async function runWorkflow(
     if (key !== 'wait' && key !== 'requirement' && key !== 'param') values[key] = list[list.length - 1]!
   }
 
-  // Resolve: workflow instance first, then template instantiation.
-  let workflow: { config: WorkflowConfig; configFile: string }
-  const instance = await service.loadWorkflowConfig(workspace, target)
-  if (instance) {
-    workflow = { config: instance.config, configFile: instance.file }
-    const taskFields = instance.config.context?.taskInput?.fields ?? []
-    const missingFields = taskFields.filter((field) => field.required && values[field.id] === undefined)
-    if (missingFields.length > 0) {
-      const filled = await askMissingTaskInputs(
-        ctx,
-        agent,
-        signal,
-        taskFields,
-        missingFields.map((field) => field.id),
-      )
-      if (!filled) {
+  // Resolve: workflow instance first, then the latest template version
+  // (shared orchestration in run-target.ts, P1-1); failure texts are local.
+  const resolved = await resolveRunTarget({ ctx, agent, signal, service, workspace, target, values })
+  if (!resolved.ok) {
+    switch (resolved.reason) {
+      case 'not-found':
         return err(
-          `实例「${target}」缺少必填参数：${missingFields.map((field) => field.label).join('、')}\n` +
-            `用法：/workflow run ${target}${taskFields.map((field) => ` --param ${field.id}=<${field.label}>`).join('')}`,
+          `未找到 workflow 实例或模板「${target}」。\n` +
+            `- 工作区实例：先在工作台从模板创建（.dsh/workflows/ 下的文件名），或 /workflow list 查看\n` +
+            `- 内置模板 id：${resolved.templateIds.join('、') || '无'}\n` +
+            `注意实例名≠模板名：例如 demo 实例 code-optimization-demo 来自模板 code-optimization-review（换机器时用模板 id 更可靠）。`,
         )
-      }
-      Object.assign(values, filled)
-    }
-  } else {
-    const templates = await service.listTemplates()
-    const template = templates
-      .filter((t) => t.id === target)
-      .sort((a, b) => a.version.localeCompare(b.version))
-      .at(-1)
-    if (!template) {
-      const templateIds = templates.map((t) => t.id).join('、')
-      return err(
-        `未找到 workflow 实例或模板「${target}」。\n` +
-          `- 工作区实例：先在工作台从模板创建（.dsh/workflows/ 下的文件名），或 /workflow list 查看\n` +
-          `- 内置模板 id：${templateIds || '无'}\n` +
-          `注意实例名≠模板名：例如 demo 实例 code-optimization-demo 来自模板 code-optimization-review（换机器时用模板 id 更可靠）。`,
-      )
-    }
-    const missing = (template.manifest.spec.parameters ?? [])
-      .filter((p) => p.required && values[p.id] === undefined && p.default === undefined)
-    if (missing.length > 0) {
-      const filled = await askMissingParameters(
-        ctx,
-        agent,
-        signal,
-        template.manifest,
-        missing.map((p) => p.id),
-      )
-      if (!filled) {
+      case 'missing-instance-fields':
         return err(
-          `模板「${target}」缺少必填参数：${missing.map((p) => p.label).join('、')}\n` +
-            `用法：/workflow run ${target}${(template.manifest.spec.parameters ?? [])
+          `实例「${target}」缺少必填参数：${resolved.missing.map((field) => field.label).join('、')}\n` +
+            `用法：/workflow run ${target}${resolved.fields.map((field) => ` --param ${field.id}=<${field.label}>`).join('')}`,
+        )
+      case 'missing-template-params':
+        return err(
+          `模板「${target}」缺少必填参数：${resolved.missing.map((p) => p.label).join('、')}\n` +
+            `用法：/workflow run ${target}${(resolved.template.manifest.spec.parameters ?? [])
               .map((p) => ` --param ${p.id}=<${p.label}>`)
               .join('')}`,
         )
-      }
-      Object.assign(values, filled)
     }
-    const instantiated = await service.instantiate(target, undefined, values, {})
-    workflow = { config: instantiated.config, configFile: target }
   }
+  const workflow = resolved.workflow
 
   const requirement = lastFlag(flags, 'requirement')
   if (requirement && workflow.config.context) {

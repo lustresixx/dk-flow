@@ -8,10 +8,9 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { JsonValue } from '@deepseek-ai/dsh-session'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type AceHarnessService from './service.js'
-import { askMissingParameters, askMissingTaskInputs } from './params-dialog.js'
 import { runJsonDto } from './projections.js'
+import { resolveRunTarget } from './run-target.js'
 import type { RunState } from './engine/types.js'
-import type { WorkflowConfig } from './dsl/types.js'
 
 /**
  * Canonical JSON run projection shared by all tools. Every field must be
@@ -117,59 +116,33 @@ export function registerTools(ctx: Context, service: AceHarnessService): void {
           Object.entries(params).map(([key, value]) => [key, String(value)]),
         )
 
-        let workflow: { config: WorkflowConfig; configFile: string }
-        const instance = await service.loadWorkflowConfig(workspace, target)
-        if (instance) {
-          workflow = { config: instance.config, configFile: instance.file }
-          const taskFields = instance.config.context?.taskInput?.fields ?? []
-          const missingFields = taskFields.filter((field) => field.required && values[field.id] === undefined)
-          if (missingFields.length > 0) {
-            const filled = await askMissingTaskInputs(
-              ctx,
-              agent,
-              exec.signal,
-              taskFields,
-              missingFields.map((field) => field.id),
-            )
-            if (!filled) {
+        // Shared resolution orchestration (P1-1); failure texts are local.
+        const resolved = await resolveRunTarget({
+          ctx,
+          agent,
+          signal: exec.signal,
+          service,
+          workspace,
+          target,
+          values,
+        })
+        if (!resolved.ok) {
+          switch (resolved.reason) {
+            case 'not-found':
               throw new Error(
-                `实例「${target}」缺少必填参数：${missingFields.map((field) => field.label).join('、')}（当前环境无交互界面，请通过 params 参数提供）`,
+                `未找到 workflow 实例或模板「${target}」。可用内置模板 id：${resolved.templateIds.join('、') || '无'}。工作区实例需先在工作台从模板创建（注意实例名≠模板名，例如 demo 实例 code-optimization-demo 来自模板 code-optimization-review）。`,
               )
-            }
-            Object.assign(values, filled)
-          }
-        } else {
-          const templates = await service.listTemplates()
-          const template = templates
-            .filter((t) => t.id === target)
-            .sort((a, b) => a.version.localeCompare(b.version))
-            .at(-1)
-          if (!template) {
-            throw new Error(
-              `未找到 workflow 实例或模板「${target}」。可用内置模板 id：${templates.map((t) => t.id).join('、') || '无'}。工作区实例需先在工作台从模板创建（注意实例名≠模板名，例如 demo 实例 code-optimization-demo 来自模板 code-optimization-review）。`,
-            )
-          }
-          const missing = (template.manifest.spec.parameters ?? []).filter(
-            (p) => p.required && values[p.id] === undefined && p.default === undefined,
-          )
-          if (missing.length > 0) {
-            const filled = await askMissingParameters(
-              ctx,
-              agent,
-              exec.signal,
-              template.manifest,
-              missing.map((p) => p.id),
-            )
-            if (!filled) {
+            case 'missing-instance-fields':
               throw new Error(
-                `缺少必填参数：${missing.map((p) => p.label).join('、')}（当前环境无交互界面，请通过 params 参数提供）`,
+                `实例「${target}」缺少必填参数：${resolved.missing.map((field) => field.label).join('、')}（当前环境无交互界面，请通过 params 参数提供）`,
               )
-            }
-            Object.assign(values, filled)
+            case 'missing-template-params':
+              throw new Error(
+                `缺少必填参数：${resolved.missing.map((p) => p.label).join('、')}（当前环境无交互界面，请通过 params 参数提供）`,
+              )
           }
-          const instantiated = await service.instantiate(target, undefined, values, {})
-          workflow = { config: instantiated.config, configFile: target }
         }
+        const workflow = resolved.workflow
 
         const handle = await service.startRun({
           parent: agent,

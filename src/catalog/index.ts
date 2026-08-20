@@ -33,6 +33,45 @@ export interface BuiltinWorkflowTemplate {
   config: WorkflowConfig
 }
 
+/**
+ * Compare two dotted version strings segment by segment: numeric segments
+ * compare numerically (`0.10.0` > `0.9.0`, unlike a plain localeCompare),
+ * anything else falls back to locale order for that segment.
+ */
+export function compareVersions(a: string, b: string): number {
+  const pa = a.split('.')
+  const pb = b.split('.')
+  const length = Math.max(pa.length, pb.length)
+  for (let index = 0; index < length; index += 1) {
+    const sa = pa[index] ?? ''
+    const sb = pb[index] ?? ''
+    const na = sa === '' ? NaN : Number(sa)
+    const nb = sb === '' ? NaN : Number(sb)
+    const bothNumeric = Number.isInteger(na) && Number.isInteger(nb)
+    const compared = bothNumeric ? na - nb : sa.localeCompare(sb)
+    if (compared !== 0) return compared < 0 ? -1 : 1
+  }
+  return 0
+}
+
+/**
+ * The latest version of one template id, per `compareVersions`. The single
+ * "latest" rule for every resolution path (P1-1): instance loading,
+ * template instantiation, `/workflow run`, `run_workflow`, and the REST API
+ * all resolve through this helper.
+ */
+export function latestTemplate<T extends { id: string; version: string }>(
+  templates: readonly T[],
+  id: string,
+): T | undefined {
+  let best: T | undefined
+  for (const candidate of templates) {
+    if (candidate.id !== id) continue
+    if (best === undefined || compareVersions(candidate.version, best.version) > 0) best = candidate
+  }
+  return best
+}
+
 /** Load every packaged agent definition, sorted by name. */
 export async function loadBuiltinAgents(): Promise<AgentDefinition[]> {
   const dir = new URL('agents/', resourcesRoot())
@@ -72,9 +111,7 @@ export async function loadBuiltinTemplates(): Promise<BuiltinWorkflowTemplate[]>
       templates.push({ id, version, manifest, config })
     }
   }
-  return templates.sort(
-    (a, b) => a.id.localeCompare(b.id) || a.version.localeCompare(b.version),
-  )
+  return templates.sort((a, b) => a.id.localeCompare(b.id) || compareVersions(a.version, b.version))
 }
 
 /**

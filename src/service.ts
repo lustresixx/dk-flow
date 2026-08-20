@@ -19,6 +19,7 @@ import type { Agent, AgentRegistry } from '@deepseek-ai/dsh-agent'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import {
   firstCommentLine,
+  latestTemplate,
   listBuiltinScripts,
   loadBuiltinAgents,
   loadBuiltinTemplates,
@@ -448,7 +449,7 @@ export default class AceHarnessService extends Service {
     const candidates = this.templates.filter((template) => template.id === templateId)
     const template = version
       ? candidates.find((candidate) => candidate.version === version)
-      : candidates[candidates.length - 1]
+      : latestTemplate(candidates, templateId)
     if (!template) throw new Error(`未找到模板「${templateId}」${version ? ` 版本 ${version}` : ''}`)
     const sources = await readBuiltinTemplateSources(template.id, template.version)
     if (!sources) throw new Error(`模板「${templateId}」资源缺失`)
@@ -564,10 +565,7 @@ export default class AceHarnessService extends Service {
       workflow = { config: instance.config, configFile: instance.file }
     } else {
       await this.catalogReady
-      const template = [...this.templates]
-        .filter((candidate) => candidate.id === input.workflowRef)
-        .sort((a, b) => a.version.localeCompare(b.version))
-        .at(-1)
+      const template = latestTemplate(this.templates, input.workflowRef)
       if (!template) throw new Error(`未找到 workflow 实例或模板「${input.workflowRef}」`)
       const instantiated = await this.instantiate(input.workflowRef, undefined, input.values, {})
       workflow = { config: instantiated.config, configFile: input.workflowRef }
@@ -716,7 +714,8 @@ export default class AceHarnessService extends Service {
     const instance = await loadWorkflow(workspace, configFile)
     if (instance) return { config: instance.config, file: instance.file }
     await this.catalogReady
-    const template = this.templates.find((candidate) => candidate.id === configFile)
+    // Latest version wins (P1-1): the same rule every entry point applies.
+    const template = latestTemplate(this.templates, configFile)
     if (template) return { config: template.config, file: configFile }
     try {
       const path = isAbsolute(configFile) ? configFile : resolve(workspace, configFile)
