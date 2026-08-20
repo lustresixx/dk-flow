@@ -6,7 +6,7 @@
  * @module dsh-ace-harness/engine
  */
 import type { StateMachineState, StepVerdict, WorkflowConfig, WorkflowStep } from '../dsl/types.js'
-import { buildStateEvidence, buildStepEvidence } from './prompts.js'
+import { buildStateEvidence, buildStepEvidence, CONCLUSION_BUDGET, truncate } from './prompts.js'
 import { runScriptNode } from './script-runner.js'
 import {
   assertSelfTransitionBudget,
@@ -342,7 +342,9 @@ async function executeState(
           verdict: {
             verdict: scriptResult.success ? 'success' : 'fail',
             issues: [],
-            rationale: scriptResult.error ?? '',
+            // Script outputs carry no separate conclusion: the output text IS
+            // the evidence, so it flows into state-level evidence verbatim.
+            rationale: scriptResult.error ?? truncate(scriptResult.output, CONCLUSION_BUDGET),
           },
           startedAt: now(),
           finishedAt: now(),
