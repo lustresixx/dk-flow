@@ -15,7 +15,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { basename, dirname, resolve as resolvePath, sep } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { transform } from 'lightningcss'
 import { defineConfig, type UserConfig } from 'tsdown'
 
@@ -47,6 +46,64 @@ const GENERATED_REMOTE = /^@deepseek-ai\/dsh-[a-z0-9]+(?:-[a-z0-9]+)*\/remote$/
 /** Virtual-id wrapper keeping module CSS away from tsdown's own css pipeline. */
 const CSS_VIRTUAL_PREFIX = '\0dsh-css:'
 const CSS_VIRTUAL_SUFFIX = '.mjs'
+
+/**
+ * Browser shim definitions prepended to the bundle. Inlined dependencies
+ * (yaml) end up as CJS `require("process")` / `require("buffer")`; rolldown
+ * resolves node builtins before alias hooks, so the rewrite happens at
+ * renderChunk time: the definitions land in the intro and the bare requires
+ * are replaced with these namespace objects.
+ */
+const PROCESS_PRELUDE = `var __dshProcessShim = (function () {
+  var p = (typeof globalThis !== 'undefined' && globalThis.process) || {};
+  var env = p.env || {};
+  function noop() {}
+  function cwd() { return '/'; }
+  function nextTick(fn) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    (globalThis.queueMicrotask || function (cb) { Promise.resolve().then(cb); })(function () { fn.apply(null, args); });
+  }
+  return { default: p, env: env, platform: 'browser', browser: true, version: '', versions: {}, emitWarning: noop, cwd: cwd, nextTick: nextTick, __esModule: true };
+})();`
+const BUFFER_PRELUDE = `var __dshBufferShim = (function () {
+  var te = new TextEncoder();
+  var td = new TextDecoder();
+  function bytesToBase64(u8) {
+    var s = '';
+    for (var i = 0; i < u8.length; i += 0x8000) { s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); }
+    return btoa(s);
+  }
+  function base64ToBytes(b64) {
+    var s = atob(b64);
+    var u8 = new Uint8Array(s.length);
+    for (var i = 0; i < s.length; i++) u8[i] = s.charCodeAt(i);
+    return u8;
+  }
+  var BufferShim = class extends Uint8Array {
+    constructor(input, enc) {
+      if (typeof input === 'string') super(enc === 'base64' ? base64ToBytes(input) : te.encode(input));
+      else if (input instanceof Uint8Array) super(input);
+      else super(input ?? 0);
+    }
+    toString(enc) {
+      if (enc === 'base64') return bytesToBase64(this);
+      if (enc === 'hex') return Array.from(this).map(function (b) { return b.toString(16).padStart(2, '0'); }).join('');
+      return td.decode(this);
+    }
+    static from(value, enc) { return new BufferShim(value, enc); }
+    static alloc(size) { return new BufferShim(size); }
+    static isBuffer(value) { return value instanceof Uint8Array; }
+    static byteLength(value) { return typeof value === 'string' ? te.encode(value).length : (value == null ? 0 : value.length); }
+    static concat(list) {
+      var total = list.reduce(function (sum, item) { return sum + item.length; }, 0);
+      var out = new BufferShim(total);
+      var offset = 0;
+      for (var i = 0; i < list.length; i++) { out.set(list[i], offset); offset += list[i].length; }
+      return out;
+    }
+  };
+  return { default: BufferShim, Buffer: BufferShim, __esModule: true };
+})();`
 
 /**
  * Module id this bundle registers under via `__ModuleLoader__.load`. The host
@@ -84,6 +141,21 @@ const config: UserConfig = {
         `client bundle purity: "${source}" is not a platform module (CLIENT_EXTERNALS), an inline-safe wire layer, or a generated /remote contribution — `
         + 'cross-plugin value imports are forbidden; collaborate through cordis services (type-only imports are erased and never reach this gate)',
       )
+    },
+  }, {
+    name: 'dsh-node-shim-rewrite',
+    renderChunk(code) {
+      const needsProcess = code.includes('require("process")')
+      const needsBuffer = code.includes('require("buffer")')
+      if (!needsProcess && !needsBuffer) return null
+      const prelude = [
+        needsProcess ? PROCESS_PRELUDE : '',
+        needsBuffer ? BUFFER_PRELUDE : '',
+      ].filter((part) => part !== '').join('\n')
+      const rewritten = code
+        .replaceAll('require("process")', '__dshProcessShim')
+        .replaceAll('require("buffer")', '__dshBufferShim')
+      return { code: `${prelude}\n${rewritten}`, map: null }
     },
   }, {
     name: 'dsh-css-modules-inline',
