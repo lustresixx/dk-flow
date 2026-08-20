@@ -129,7 +129,7 @@ export function registerCommands(ctx: Context, service: AceHarnessService): void
   ctx.commands.register({
     name: 'workflow',
     description: 'ACE 状态机工作流：模板、实例、运行、恢复与治理',
-    input: { hint: 'list | templates | scripts | create <模板> | run <workflow> [--wait] | runs | show <runId> | resume <runId> | stop <runId> | validate <file>' },
+    input: { hint: 'list | templates | scripts | create <模板> | run <workflow> [--wait] | test <workflow> <状态> <步骤> | runs | show <runId> | resume <runId> | stop <runId> | validate <file>' },
     async handler(invocation: CommandInvocation): Promise<CommandResult> {
       return dispatch(ctx, service, invocation)
     },
@@ -197,6 +197,36 @@ async function dispatch(ctx: Context, service: AceHarnessService, invocation: Co
           '把通用脚本放进工作区 .ace-workflows/scripts/ 即可被任何工作流的 scriptFile 直接引用。',
         ]
         return ok(lines.join('\n'))
+      }
+      case 'test': {
+        const file = positional[1]
+        const stateName = positional[2]
+        const stepName = positional[3]
+        if (!file || !stateName || !stepName) {
+          return err('用法：/workflow test <workflowFile|templateId> <状态> <步骤> [--param id=value ...]（单节点独立验证，不跑整个工作流）')
+        }
+        const resolved = await service.resolveWorkflowConfig(workspace, file)
+        if (!resolved) return err(`未找到 workflow「${file}」`)
+        const values: Record<string, string> = {}
+        Object.assign(values, parseParamFlags(flags))
+        for (const [key, list] of flags) {
+          if (key !== 'param') values[key] = list[list.length - 1]!
+        }
+        const result = await service.testStep({
+          parent: agent,
+          signal,
+          config: resolved.config,
+          stateName,
+          stepName,
+          values,
+          workspace,
+        })
+        const lines = [
+          `步骤验证：${result.state}/${result.step} [${result.type}] → ${result.verdict ? result.verdict.verdict : '无结论'}`,
+          `产出：\n${result.outputSummary}`,
+        ]
+        if (result.data !== undefined) lines.push(`结构化数据：\n${JSON.stringify(result.data, null, 2)}`)
+        return ok(lines.join('\n\n'))
       }
       case 'create': {
         const templateId = positional[1]
@@ -281,7 +311,7 @@ async function dispatch(ctx: Context, service: AceHarnessService, invocation: Co
       }
       default:
         return err(
-          `未知子命令「${sub}」。可用：list | templates | agents | scripts | create <模板> | run <workflow> [--wait] | runs | show <runId> | resume <runId> | stop <runId> | validate <file> | delete <file>`,
+          `未知子命令「${sub}」。可用：list | templates | agents | scripts | create <模板> | run <workflow> [--wait] | test <workflow> <状态> <步骤> | runs | show <runId> | resume <runId> | stop <runId> | validate <file> | delete <file>`,
         )
     }
   } catch (error) {

@@ -108,8 +108,48 @@ export function EditorPane(props: EditorPaneProps): JSX.Element {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [nameError, setNameError] = useState<string | null>(null)
+  const [testResult, setTestResult] = useState<{ loading: boolean; text: string } | null>(null)
 
   const config = useMemo(() => baseConfig, [baseConfig])
+
+  /** Verify one step in isolation: serialize the current graph and run it. */
+  const runStepTest = useCallback(
+    async (draft: StepDraft): Promise<void> => {
+      const stateName = selectedNode
+      if (!stateName) return
+      setTestResult({ loading: true, text: '验证中…' })
+      try {
+        const next = graphToConfig(nodes, edges, config)
+        const yaml = configToYaml(next)
+        const response = await fetch('/plugins/dsh-ace-harness/test-step', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ yaml, state: stateName, step: draft.name, values: {} }),
+        })
+        const body = (await response.json()) as {
+          error?: string
+          type?: string
+          verdict?: string | null
+          outputSummary?: string
+          data?: unknown
+        }
+        if (!response.ok) {
+          setTestResult({ loading: false, text: body.error ?? `HTTP ${response.status}` })
+          return
+        }
+        setTestResult({
+          loading: false,
+          text:
+            `[${body.type ?? ''}] verdict: ${body.verdict ?? '无'}\n` +
+            `产出：\n${body.outputSummary ?? ''}` +
+            (body.data != null ? `\n\n结构化数据：\n${JSON.stringify(body.data, null, 2)}` : ''),
+        })
+      } catch (error) {
+        setTestResult({ loading: false, text: `验证失败：${(error as Error).message}` })
+      }
+    },
+    [nodes, edges, config, selectedNode],
+  )
 
   const onNodesChange: OnNodesChange<StateNode> = useCallback(
     (changes: NodeChange<StateNode>[]) => {
@@ -299,6 +339,7 @@ export function EditorPane(props: EditorPaneProps): JSX.Element {
               agentNames={props.agentNames}
               onChange={(updated) => { updateNode(node.id, () => updated) }}
               onDelete={() => { deleteNode(node.id) }}
+              onTestStep={(draft) => { void runStepTest(draft) }}
             />
           ) : edge ? (
             <TransitionInspector
@@ -312,6 +353,11 @@ export function EditorPane(props: EditorPaneProps): JSX.Element {
               选择状态编辑其步骤与属性；拖动节点右侧圆点到另一节点可创建转移边（默认「成功」，可在边上改为「失败」）。
             </div>
           )}
+          {testResult ? (
+            <div className={styles.testResult} data-loading={testResult.loading ? 'true' : 'false'}>
+              <pre>{testResult.text}</pre>
+            </div>
+          ) : null}
         </aside>
       </div>
     </div>
@@ -332,6 +378,7 @@ function StateInspector(props: {
   agentNames: string[]
   onChange: (node: StateNode) => void
   onDelete: () => void
+  onTestStep?: (draft: StepDraft) => void
 }): JSX.Element {
   const { node } = props
   const state = node.data.state
@@ -468,6 +515,7 @@ function StateInspector(props: {
               ;[updated[index - 1], updated[index]] = [updated[index]!, updated[index - 1]!]
               setDrafts(updated)
             }}
+            onTest={props.onTestStep ? () => { props.onTestStep!(draft) } : undefined}
           />
         ))}
       </ol>
@@ -511,6 +559,7 @@ function StepEditor(props: {
   onChange: (draft: StepDraft) => void
   onRemove: () => void
   onMoveUp: () => void
+  onTest?: () => void
 }): JSX.Element {
   const { draft } = props
   const set = (patch: Partial<StepDraft>): void => props.onChange({ ...draft, ...patch })
@@ -638,6 +687,11 @@ function StepEditor(props: {
           value={draft.backoffMs}
           onChange={(event) => { set({ backoffMs: event.target.value }) }}
         />
+        {props.onTest ? (
+          <button type="button" className={styles.stepTest} title="单节点独立验证" onClick={props.onTest}>
+            ▶ 验证
+          </button>
+        ) : null}
         <button type="button" onClick={props.onMoveUp}>↑</button>
         <button type="button" className={styles.stepRemove} onClick={props.onRemove}>×</button>
       </div>

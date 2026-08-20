@@ -192,6 +192,8 @@ export interface EngineRunOptions {
   pythonCommand?: string
   /** Workspace scripts collection directory (`<workspace>/.ace-workflows/scripts`). */
   scriptsHome?: string
+  /** Per-run sandbox directory handed to sandboxed script execution. */
+  sandboxDir?: string
   /** Human decision when no transition matches. */
   askHumanTransition: (input: {
     state: string

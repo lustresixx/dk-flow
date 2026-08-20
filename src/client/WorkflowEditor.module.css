@@ -210,6 +210,35 @@
   color: #ff9d9d;
 }
 
+.stepTest {
+  border: 1px solid rgba(52, 211, 153, 0.4);
+  background: rgba(52, 211, 153, 0.1);
+  color: #6ee7b7;
+  border-radius: 6px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.testResult {
+  border-top: 1px dashed var(--dsw-border, #3c3f4a);
+  padding: 10px 14px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.testResult pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #c6c6da;
+}
+
+.testResult[data-loading='true'] pre {
+  color: #9a9ab0;
+}
+
 .addStep {
   border: 1px dashed var(--dsw-border, #3c3f4a);
   background: transparent;

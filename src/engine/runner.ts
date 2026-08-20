@@ -403,9 +403,10 @@ async function executeState(
                 scriptsHome: options.scriptsHome,
                 pythonCommand: options.pythonCommand ?? 'python',
                 timeoutMs,
+                sandboxDir: options.sandboxDir,
                 signal: options.signal,
               })
-            : runScriptNode(step.script ?? '', scriptInput, { timeoutMs })
+            : await runScriptNode(step.script ?? '', scriptInput, { timeoutMs, signal: options.signal })
         outcome = {
           key,
           state: machineState.name,

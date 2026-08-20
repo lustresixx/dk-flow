@@ -14,6 +14,8 @@
 - **对抗式多 Agent**：13 个内置角色（defender / attacker / judge / supervisor），红蓝评审、七角色接力评审等 7 个内置模板
 - **平台级运行治理**：断点恢复、崩溃自愈、人工审批门、风险自适应 supervisor、自动重试（指数退避）、步骤级超时、后台 job、停止即停、并发上限
 - **三大入口**：全屏工作台（React Flow 可视化编辑器 + 运行时拓扑图 + 流式侧边栏）、`/workflow` 斜杠命令族、模型工具（`workflow_list` / `run_workflow` / `workflow_manage`）
+- **单节点独立验证**：`/workflow test <工作流> <状态> <步骤>` 或编辑器里每个步骤的「▶ 验证」按钮——只跑一个节点看产出与 verdict，不跑整个工作流
+- **每次运行独立沙箱**：JS 脚本在 worker 线程执行（独立内存 + 可靠超时终止，`while(true)` 也能杀）；Python 子进程在每次运行的沙箱目录中运行（独立 cwd、密钥脱敏环境、临时目录重定向）
 - **脚本与技能收集目录**：工作区 `.ace-workflows/scripts/` + 内置脚本库三级解析，`/workflow scripts` 清单；框架 skill 自动安装到 `$DSH_HOME/skills/`
 - **REST API**：状态聚合、工作流 CRUD、模板实例化、运行、流式进度、停止
 
@@ -54,6 +56,7 @@ dsh --profile my-profile --port 4090
 /workflow scripts                   # 内置 + 收集目录脚本清单
 /workflow create <模板> [--save]    # 从模板创建实例（参数可留空）
 /workflow run <实例|模板> [--param id=value ...] [--wait]
+/workflow test <实例|模板> <状态> <步骤> [--param id=value ...]   # 单节点独立验证
 /workflow runs | show <runId> | resume <runId> | stop <runId>
 /workflow validate <file> | delete <file>
 ```
@@ -114,6 +117,11 @@ workflow:
 - `timeoutMinutes`：覆盖默认超时（AI/LLM 用插件 `stepTimeoutMs`，脚本 JS 10s / Python 30s）
 - `retry: { maxRetries, backoffMs }`：只重试**执行错误**（模型调用失败/超时/子流崩溃）；fail 裁决是流转信号不重试；运行记录显示重试次数
 - `parallelGroup`：同组步骤并行执行，join 策略 `all / any / quorum / manual`
+
+### 单节点验证与运行沙箱
+
+- **单节点验证**：`/workflow test <工作流> <状态> <步骤> [--param ...]`（全部节点类型，走会话上下文）；编辑器步骤卡上的「▶ 验证」按钮（脚本/快速 LLM 自包含直接跑，agent/子工作流会提示到会话中验证）；`POST /plugins/dsh-ace-harness/test-step`（支持直接传 YAML）
+- **每次运行独立沙箱**：启动时创建 `<runId>/sandbox/` 目录；JS 脚本在 worker 线程执行（`resourceLimits` 内存上限、超时/取消可靠终止）；Python 子进程以沙箱目录为 cwd、环境变量脱敏（不含任何密钥，仅保留 PATH 等系统变量）、TEMP/TMP 重定向到沙箱、强制 UTF-8 IO。注意：这是进程级隔离约定，不是容器级安全边界（见 ROADMAP P0-4）
 
 ### 脚本与 Skill 收集目录
 

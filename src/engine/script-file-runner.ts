@@ -16,7 +16,7 @@ import { PYTHON_TIMEOUT_MS, runPythonScript } from './python-runner.js'
 import { runScriptNode, SCRIPT_TIMEOUT_MS, type ScriptNodeInput, type ScriptNodeResult } from './script-runner.js'
 
 export interface ScriptFileOptions {
-  /** Workspace root the file resolves against; absent means the CWD. */
+  /** Workspace root the file resolves against; absent means no workspace root. */
   projectRoot?: string
   /** Workspace scripts collection directory (`<workspace>/.ace-workflows/scripts`). */
   scriptsHome?: string
@@ -24,6 +24,8 @@ export interface ScriptFileOptions {
   pythonCommand: string
   /** Per-step override of the language default timeout; undefined uses it. */
   timeoutMs?: number
+  /** Per-run sandbox directory handed to Python subprocesses. */
+  sandboxDir?: string
   signal: AbortSignal
 }
 
@@ -93,7 +95,10 @@ export async function runScriptFile(
   }
   const ext = extname(filePath).toLowerCase()
   if (ext === '.js' || ext === '.mjs' || ext === '.cjs') {
-    return runScriptNode(source, input, { timeoutMs: options.timeoutMs ?? SCRIPT_TIMEOUT_MS })
+    return runScriptNode(source, input, {
+      timeoutMs: options.timeoutMs ?? SCRIPT_TIMEOUT_MS,
+      signal: options.signal,
+    })
   }
   if (ext === '.py') {
     return runPythonScript({
@@ -102,6 +107,7 @@ export async function runScriptFile(
       input,
       timeoutMs: options.timeoutMs ?? PYTHON_TIMEOUT_MS,
       signal: options.signal,
+      sandboxDir: options.sandboxDir,
     })
   }
   return failed(

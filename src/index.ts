@@ -13,6 +13,8 @@ import { existsSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { fileURLToPath } from 'node:url'
 import { registerCommands } from './commands.js'
+import { parseWorkflowYaml } from './dsl/load.js'
+import type { WorkflowConfig } from './dsl/types.js'
 import AceHarnessService, { type AceHarnessConfig } from './service.js'
 import { installFrameworkSkill } from './store/skill-install.js'
 import { registerTools } from './tools.js'
@@ -490,6 +492,77 @@ export function apply(ctx: Context, config: Config): void {
         }
       },
     }), 'ace-harness: run route')
+
+    // Single-node verification: run one step in isolation (script/llm steps
+    // are self-contained; agent/subworkflow steps need session context and
+    // report that clearly).
+    ctx.effect(() => webServer.register({
+      kind: 'exact',
+      path: '/plugins/dsh-ace-harness/test-step',
+      handler: async (req, res) => {
+        try {
+          if (req.method !== 'POST') {
+            res.writeHead(405, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end('method not allowed')
+            return
+          }
+          const body = JSON.parse(await readRequestBody(req, 1_000_000)) as {
+            workspace?: string
+            workflow?: string
+            yaml?: string
+            state?: string
+            step?: string
+            values?: Record<string, string>
+          }
+          if (!body.state || !body.step) {
+            res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end('缺少 state / step')
+            return
+          }
+          const workspacePath = body.workspace ?? workspaceRegistry.list()[0]?.path ?? ''
+          let config: WorkflowConfig
+          if (body.yaml) {
+            config = parseWorkflowYaml(body.yaml)
+          } else {
+            if (!body.workflow) {
+              res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+              res.end('缺少 workflow 或 yaml')
+              return
+            }
+            const resolved = await aceHarness.resolveWorkflowConfig(workspacePath, body.workflow)
+            if (!resolved) {
+              res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+              res.end(`未找到 workflow「${body.workflow}」`)
+              return
+            }
+            config = resolved.config
+          }
+          const result = await aceHarness.testStep({
+            signal: new AbortController().signal,
+            config,
+            stateName: body.state,
+            stepName: body.step,
+            values: body.values ?? {},
+            workspace: workspacePath,
+          })
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+          res.end(
+            JSON.stringify({
+              state: result.state,
+              step: result.step,
+              type: result.type,
+              verdict: result.verdict?.verdict ?? null,
+              rationale: result.verdict?.rationale ?? null,
+              outputSummary: result.outputSummary,
+              data: result.data ?? null,
+            }),
+          )
+        } catch (error) {
+          res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+          res.end(String((error as Error).message))
+        }
+      },
+    }), 'ace-harness: test-step route')
 
     // Live streaming projection of one run, polled by the web panel.
     ctx.effect(() => webServer.register({

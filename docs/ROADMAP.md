@@ -14,6 +14,8 @@
 | 交互入口 | `/workflow` 斜杠命令族、`workflow_list` / `run_workflow` / `workflow_manage` 模型工具、斜杠菜单选择器、缺参弹卡询问（工具路径）、运行时参数表单（工作台） |
 | 治理与恢复 | 每步持久化 + 断点恢复、崩溃归一化（10 分钟 stale → crashed）、人工审批门、无匹配人工决策点、supervisor 检查点（风险自适应）与评分、经验沉淀、Git baseline、审计日志 |
 | 平台控制 | 步骤自动重试（指数退避、只重试瞬时错误）、步骤级超时、运行并发上限、停止按钮、wait=true 取消回合自动转后台 job（不丢运行）、运行保留（stale 归一化） |
+| 开发体验（v1） | 单节点独立验证：`/workflow test`（全节点类型）、编辑器「▶ 验证」按钮、`POST /test-step` API（支持直接传 YAML） |
+| 运行沙箱（v1） | 每次运行独立沙箱目录；JS 脚本 worker 线程隔离（内存上限 + 可靠超时终止，`while(true)` 可杀）；Python 子进程沙箱 cwd + 环境脱敏 + 临时目录重定向 + UTF-8 强制 |
 | 可观测（基础） | 实时流式侧边栏（拓扑图 + 每步输出）、运行记录页运行时拓扑图（状态着色 + 执行路径加亮）、attempts/failedStates 显式呈现 |
 | API（基础） | REST：state / workflows（CRUD）/ instantiate / run / stream / stop / assets；插件 Config（provider、model、超时、pythonCommand、并发等） |
 | 脚本与技能目录 | 工作区 `.ace-workflows/scripts/` 收集目录 + 内置脚本库 + 三级解析 + `/workflow scripts`；`$DSH_HOME/skills/ace-workflow/` skill 自动安装 |
@@ -31,9 +33,9 @@
 3. **持久化格式版本化**
    - 现状：`state.json` 无 schema 版本，字段演进靠"向后兼容"
    - 需要：显式 `SCHEMA_VERSION` + 迁移器；旧格式要么迁移要么明确拒绝
-4. **安全边界**
-   - 现状：脚本是"信任配置"约定（node:vm 非安全边界、Python 子进程无沙箱、preCommands 直接执行）
-   - 需要：脚本/命令执行策略（允许/审批/沙箱）、密钥注入与脱敏（日志/结果里出现 key 一律打码）、路径越界防护补齐、资源上限（内存/CPU/时长）
+4. **安全边界**（🚧 v1 已具备进程级隔离，待补齐）
+   - 已有：JS 脚本 worker 线程隔离、Python 子进程独立沙箱目录 + 环境脱敏、路径越界防护、超时/资源上限
+   - 待补：容器/命名空间级沙箱（或对接 DSH sandbox 能力）、preCommands 沙箱化、密钥注入（而非仅脱敏）、资源上限策略化（CPU/内存配额可配置）、日志/结果统一脱敏门禁
 5. **计量与成本基础**
    - 现状：子代理的 token 用量在各自 session 里，运行记录没有记账
    - 需要：每步/每运行的 token 用量、成本、耗时写入 RunState；按租户汇总

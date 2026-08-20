@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, sep } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { runScriptFile } from '../src/engine/script-file-runner.js'
@@ -159,6 +159,33 @@ describe.skipIf(!PYTHON_OK)('runScriptFile python', () => {
     const result = await pending
     expect(result.success).toBe(false)
     expect(result.error).toContain('取消')
+  })
+
+  it('runs inside the per-run sandbox: scrubbed env, sandbox cwd, redirected temp', async () => {
+    const sandbox = join(dir, 'sandbox')
+    writeFileSync(join(dir, 'envcheck.py'), [
+      'import json, os, sys',
+      'json.load(sys.stdin)',
+      'payload = {',
+      '  "cwd": os.getcwd(),',
+      '  "has_secret": "DEEPSEEK_API_KEY" in os.environ,',
+      '  "tmp": os.environ.get("TEMP", ""),',
+      '  "utf8": os.environ.get("PYTHONUTF8", ""),',
+      '}',
+      'print(json.dumps({"output": "ok", "success": True, "data": payload}, ensure_ascii=False))',
+    ].join('\n'))
+    process.env.DEEPSEEK_API_KEY = 'secret-for-sandbox-test'
+    try {
+      const result = await runScriptFile('envcheck.py', input, options({ sandboxDir: sandbox }))
+      expect(result.success).toBe(true)
+      const data = result.data as { cwd: string; has_secret: boolean; tmp: string; utf8: string }
+      expect(data.has_secret).toBe(false)
+      expect(data.utf8).toBe('1')
+      expect(data.cwd.toLowerCase()).toBe(resolve(sandbox).toLowerCase())
+      expect(data.tmp.toLowerCase()).toContain(sandbox.toLowerCase())
+    } finally {
+      delete process.env.DEEPSEEK_API_KEY
+    }
   })
 
   it('fails readably when the python command does not exist', async () => {

@@ -1,6 +1,8 @@
 /**
  * Script-node execution: run a step's JavaScript source in an isolated
- * node:vm context and interpret the returned value as the step outcome.
+ * worker thread (own heap via `resourceLimits`, reliably terminable on
+ * timeout or abort) with a node:vm context, and interpret the returned value
+ * under the strict script contract.
  *
  * The return contract is strict: a script either returns
  * `{ output: string, success: boolean }` (optionally with a JSON-serializable
@@ -9,7 +11,7 @@
  * silently interpreted.
  * @module dsh-ace-harness/engine
  */
-import vm from 'node:vm'
+import { Worker } from 'node:worker_threads'
 
 /** Context injected into a script step. Frozen: scripts cannot mutate it. */
 export interface ScriptNodeInput {
@@ -31,20 +33,56 @@ export interface ScriptNodeResult {
   data?: unknown
 }
 
-/** Wall-clock cap for one inline script step (vm timeout, best effort). */
+/** Wall-clock cap for one script step (worker termination, reliable). */
 export const SCRIPT_TIMEOUT_MS = 10_000
 /** Cap on the combined output text. */
 const OUTPUT_BUDGET = 20_000
 /** Cap on the serialized structured payload; data must survive this budget. */
 const DATA_BUDGET = 64 * 1024
+/** Worker heap limits: a runaway script exhausts its own worker, not the host. */
+const WORKER_RESOURCE_LIMITS = {
+  maxOldGenerationSizeMb: 512,
+  maxYoungGenerationSizeMb: 128,
+  stackSizeMb: 4,
+} as const
 
-function safeStringify(value: unknown): string {
-  try {
-    return typeof value === 'string' ? value : JSON.stringify(value, null, 2)
-  } catch {
-    return String(value)
+/**
+ * Worker-thread program: one vm evaluation per message. Pure JS string (no
+ * imports) so the host can launch it with `eval: true` without a file.
+ */
+const SCRIPT_WORKER_SOURCE = `
+const vm = require('node:vm')
+const { parentPort } = require('node:worker_threads')
+parentPort.on('message', (msg) => {
+  const logs = []
+  const safeStringify = (value) => {
+    try { return typeof value === 'string' ? value : JSON.stringify(value, null, 2) } catch { return String(value) }
   }
-}
+  try {
+    const sandbox = {
+      JSON, Math, String, Number, Boolean, Array, Object, Date,
+      console: {
+        log: (...args) => { logs.push(args.map(safeStringify).join(' ')) },
+        error: (...args) => { logs.push('[error] ' + args.map(safeStringify).join(' ')) },
+      },
+      context: Object.freeze({
+        requirements: msg.input.requirements,
+        state: msg.input.state,
+        priorStepEvidence: msg.input.priorStepEvidence,
+        priorStateEvidence: msg.input.priorStateEvidence,
+        inputs: Object.freeze(Object.assign({}, msg.input.inputs)),
+        stepData: Object.freeze(Object.assign({}, msg.input.stepData)),
+      }),
+    }
+    const vmContext = vm.createContext(sandbox)
+    const wrapped = '(function () { "use strict";\\n' + msg.source + '\\n})()'
+    const value = vm.runInContext(wrapped, vmContext, { timeout: msg.timeoutMs })
+    parentPort.postMessage({ ok: true, value, logs })
+  } catch (error) {
+    parentPort.postMessage({ ok: false, error: String((error && error.message) || error), logs })
+  }
+})
+`
 
 function truncate(text: string): string {
   if (text.length <= OUTPUT_BUDGET) return text
@@ -89,7 +127,7 @@ function cloneJsonSafe(value: unknown): { ok: true; data: unknown } | { ok: fals
  *   `data` rides to downstream steps as structured evidence;
  * - `{ error }` — failed step with the message;
  * - anything else — the step fails with a diagnostic naming the contract.
- * Shared by the inline vm runner and the Python subprocess runner.
+ * Shared by the worker vm runner and the Python subprocess runner.
  */
 export function interpretScriptResult(value: unknown): ScriptNodeResult {
   const fail = (message: string): ScriptNodeResult => ({
@@ -124,53 +162,82 @@ export function interpretScriptResult(value: unknown): ScriptNodeResult {
   return result
 }
 
-/**
- * Run one inline JavaScript script step in a vm sandbox and interpret its
- * return value under the strict script contract.
- * @param options.timeoutMs - wall-clock cap for the vm call (best effort).
- */
-export function runScriptNode(
+interface WorkerOutcome {
+  value?: unknown
+  error?: string
+  logs: string[]
+}
+
+/** Run one vm evaluation inside a disposable worker thread. */
+function runInWorker(
   source: string,
   input: ScriptNodeInput,
-  options: { timeoutMs?: number } = {},
-): ScriptNodeResult {
-  const logs: string[] = []
-  const context = Object.freeze({
-    requirements: input.requirements,
-    state: input.state,
-    priorStepEvidence: input.priorStepEvidence,
-    priorStateEvidence: input.priorStateEvidence,
-    inputs: Object.freeze({ ...input.inputs }),
-    stepData: Object.freeze({ ...input.stepData }),
+  timeoutMs: number,
+  signal: AbortSignal,
+): Promise<WorkerOutcome> {
+  return new Promise((resolvePromise) => {
+    const worker = new Worker(SCRIPT_WORKER_SOURCE, {
+      eval: true,
+      resourceLimits: WORKER_RESOURCE_LIMITS,
+    })
+    let settled = false
+    const settle = (outcome: WorkerOutcome): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolvePromise(outcome)
+    }
+    const onAbort = (): void => {
+      void worker.terminate()
+      settle({ error: '运行被取消', logs: [] })
+    }
+    const timer = setTimeout(() => {
+      void worker.terminate()
+      settle({ error: `脚本执行超时（${timeoutMs}ms）`, logs: [] })
+    }, timeoutMs + 1500)
+    const cleanup = (): void => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', onAbort)
+    }
+    worker.on('message', (message: { ok: boolean; value?: unknown; error?: string; logs?: string[] }) => {
+      settle({
+        value: message.value,
+        error: message.ok ? undefined : (message.error ?? '脚本执行失败'),
+        logs: message.logs ?? [],
+      })
+    })
+    worker.on('error', (error) => {
+      settle({ error: `脚本 worker 错误: ${error.message}`, logs: [] })
+    })
+    worker.on('exit', () => {
+      settle({ error: '脚本 worker 异常退出（可能超出资源限制）', logs: [] })
+    })
+    signal.addEventListener('abort', onAbort, { once: true })
+    worker.postMessage({ source, input, timeoutMs })
   })
-  const sandbox = {
-    JSON,
-    Math,
-    String,
-    Number,
-    Boolean,
-    Array,
-    Object,
-    Date,
-    console: {
-      log: (...args: unknown[]): void => {
-        logs.push(args.map((arg) => safeStringify(arg)).join(' '))
-      },
-      error: (...args: unknown[]): void => {
-        logs.push(`[error] ${args.map((arg) => safeStringify(arg)).join(' ')}`)
-      },
-    },
-    context,
+}
+
+/**
+ * Run one JavaScript script step in an isolated worker thread and interpret
+ * its return value under the strict script contract.
+ * @param options.timeoutMs - wall-clock cap (worker termination, reliable).
+ * @param options.signal - cancellation; aborts the worker promptly.
+ */
+export async function runScriptNode(
+  source: string,
+  input: ScriptNodeInput,
+  options: { timeoutMs?: number; signal?: AbortSignal } = {},
+): Promise<ScriptNodeResult> {
+  const timeoutMs = options.timeoutMs ?? SCRIPT_TIMEOUT_MS
+  const signal = options.signal ?? new AbortController().signal
+  if (signal.aborted) {
+    return { output: '运行被取消', success: false, error: '运行被取消' }
   }
-  const vmContext = vm.createContext(sandbox)
-  let value: unknown
-  try {
-    const wrapped = `(function () { "use strict";\n${source}\n})()`
-    value = vm.runInContext(wrapped, vmContext, { timeout: options.timeoutMs ?? SCRIPT_TIMEOUT_MS })
-  } catch (error) {
-    const message = (error as Error).message
-    const output = logs.length > 0 ? `${logs.join('\n')}\n脚本执行失败: ${message}` : `脚本执行失败: ${message}`
-    return { output: truncate(output), success: false, error: message }
+  const { value, error, logs } = await runInWorker(source, input, timeoutMs, signal)
+  if (error !== undefined) {
+    const output =
+      logs.length > 0 ? `${logs.join('\n')}\n脚本执行失败: ${error}` : `脚本执行失败: ${error}`
+    return { output: truncate(output), success: false, error }
   }
   const result = interpretScriptResult(value)
   if (logs.length > 0) {

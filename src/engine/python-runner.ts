@@ -5,7 +5,10 @@
  * `{"output": "...", "success": true, "data": ...}` or `{"error": "..."}`.
  * @module dsh-ace-harness/engine
  */
+import { mkdirSync } from 'node:fs'
 import { spawn } from 'node:child_process'
+import { join } from 'node:path'
+import { sandboxEnv } from './sandbox-env.js'
 import { interpretScriptResult, type ScriptNodeInput, type ScriptNodeResult } from './script-runner.js'
 
 /** Default wall-clock cap for one Python script step. */
@@ -21,6 +24,12 @@ export interface PythonRunOptions {
   input: ScriptNodeInput
   timeoutMs: number
   signal: AbortSignal
+  /**
+   * Per-run sandbox directory: the process runs with this cwd, a scrubbed
+   * environment, and temp dirs redirected inside it. Absent means inherit
+   * (legacy host-level behavior).
+   */
+  sandboxDir?: string
 }
 
 function appendBounded(buffer: string, chunk: string): string {
@@ -77,10 +86,24 @@ export function runPythonScript(options: PythonRunOptions): Promise<ScriptNodeRe
       return
     }
     options.signal.addEventListener('abort', onAbort, { once: true })
+    // Per-run sandbox: scrubbed env, sandbox cwd, redirected temp dirs.
+    let cwd: string | undefined
+    let env: NodeJS.ProcessEnv | undefined
+    if (options.sandboxDir !== undefined) {
+      try {
+        mkdirSync(join(options.sandboxDir, 'tmp'), { recursive: true })
+      } catch {
+        // Best-effort temp dir; the process still runs with the scrubbed env.
+      }
+      cwd = options.sandboxDir
+      env = sandboxEnv(process.env, options.sandboxDir)
+    }
     try {
       child = spawn(command, [...prefixArgs, options.filePath], {
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
+        cwd,
+        env,
       })
     } catch (error) {
       finish({

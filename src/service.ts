@@ -5,6 +5,7 @@
  * panel consume this service.
  * @module dsh-ace-harness/service
  */
+import { mkdirSync } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
 import { isAbsolute, join, resolve } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
@@ -30,13 +31,15 @@ import {
   type BuiltinWorkflowTemplate,
 } from './catalog/index.js'
 import { parseWorkflowYaml, summarizeWorkflow, validateWorkflowReferences, type WorkflowSummary } from './dsl/load.js'
-import type { AgentDefinition, StepVerdict, WorkflowConfig } from './dsl/types.js'
+import type { AgentDefinition, StepType, StepVerdict, WorkflowConfig } from './dsl/types.js'
 import { extractVerdict, normalizeVerdict } from './dsl/verdict.js'
 import { buildStepPrompt, buildSupervisorPrompt, SUMMARY_BUDGET, truncate } from './engine/prompts.js'
 import { runPreCommands } from './engine/pre-commands.js'
 import { foldAssistantText, type StreamEventLike } from './engine/stream-fold.js'
 import { createRunState, runStateMachine } from './engine/runner.js'
-import { EngineError, type EngineRunOptions, type RunResult, type RunState, type StepExecutor } from './engine/types.js'
+import { EngineError, type EngineRunOptions, type RunResult, type RunState, type StepContext, type StepExecutor } from './engine/types.js'
+import { runScriptFile } from './engine/script-file-runner.js'
+import { runScriptNode } from './engine/script-runner.js'
 import { captureGitSnapshot, saveGitSnapshot } from './store/git-baseline.js'
 import { appendExperience, loadRecentExperience, renderExperience } from './store/experience.js'
 import { workspaceRoot } from './store/paths.js'
@@ -266,6 +269,16 @@ export interface WorkflowScriptEntry {
   description: string
 }
 
+/** Result of verifying one workflow step in isolation. */
+export interface TestStepResult {
+  state: string
+  step: string
+  type: StepType
+  outputSummary: string
+  verdict: StepVerdict | null
+  data: unknown
+}
+
 export default class AceHarnessService extends Service {
   private readonly config: Required<AceHarnessConfig>
   private agents: AgentDefinition[] = []
@@ -331,6 +344,158 @@ export default class AceHarnessService extends Service {
       // The collection directory does not exist yet: nothing to list.
     }
     return scripts.sort((a, b) => a.source.localeCompare(b.source) || a.name.localeCompare(b.name))
+  }
+
+  /** Create the per-run sandbox directory (best effort; never fails the run). */
+  private ensureSandboxDir(workspace: string, runId: string): void {
+    try {
+      mkdirSync(join(workspace, this.config.runDirName, 'runs', runId, 'sandbox', 'tmp'), {
+        recursive: true,
+      })
+    } catch {
+      // Sandbox creation failure degrades to host-level execution.
+    }
+  }
+
+  /** Result of verifying one workflow step in isolation. */
+  async testStep(input: {
+    parent?: Agent
+    signal: AbortSignal
+    config: WorkflowConfig
+    stateName: string
+    stepName: string
+    values: Record<string, string>
+    workspace: string
+  }): Promise<TestStepResult> {
+    const machineState = input.config.workflow.states.find((state) => state.name === input.stateName)
+    if (!machineState) throw new Error(`未找到状态「${input.stateName}」`)
+    const step = machineState.steps.find((candidate) => candidate.name === input.stepName)
+    if (!step) throw new Error(`未找到状态「${input.stateName}」中的步骤「${input.stepName}」`)
+    const type: StepType = step.type ?? 'agent'
+    const role = step.role ?? 'neutral'
+    const requirements = input.values.requirements ?? input.config.context?.requirements ?? ''
+    const stepContext: StepContext = {
+      state: machineState.name,
+      stateDescription: machineState.description ?? '',
+      requirements,
+      projectRoot: input.config.context?.projectRoot,
+      priorStateEvidence: '',
+      priorStepEvidence: '（无本状态前置步骤产出）',
+      stepData: {},
+    }
+    const scriptInput = {
+      requirements,
+      state: machineState.name,
+      priorStepEvidence: '',
+      priorStateEvidence: '',
+      inputs: input.values,
+      stepData: {},
+    }
+    const timeoutMs = step.timeoutMinutes !== undefined ? step.timeoutMinutes * 60_000 : undefined
+    const sandboxDir = join(input.workspace, this.config.runDirName, 'test-sandbox')
+    if (type === 'script') {
+      this.ensureTestSandbox(sandboxDir)
+      const result =
+        step.scriptFile?.trim() !== undefined && step.scriptFile.trim() !== ''
+          ? await runScriptFile(step.scriptFile.trim(), scriptInput, {
+              projectRoot: input.config.context?.projectRoot,
+              scriptsHome: join(input.workspace, this.config.runDirName, 'scripts'),
+              pythonCommand: this.config.pythonCommand,
+              timeoutMs,
+              sandboxDir,
+              signal: input.signal,
+            })
+          : await runScriptNode(step.script ?? '', scriptInput, { timeoutMs, signal: input.signal })
+      return {
+        state: machineState.name,
+        step: step.name,
+        type,
+        outputSummary: result.output,
+        verdict: result.success
+          ? { verdict: 'success', issues: [], rationale: result.output }
+          : { verdict: 'fail', issues: [], rationale: result.error ?? result.output },
+        data: result.data,
+      }
+    }
+    if (type === 'llm') {
+      // The bare llm call only reads `parent.options` for routing defaults.
+      const parent = (input.parent ?? { options: {} }) as Agent
+      const executor = this.makeExecutor(input.workspace, parent, `test-${Date.now()}`, 1)
+      const result = await executor.runLlmStep({
+        stepName: step.name,
+        role,
+        task: step.task ?? '',
+        agentName: step.agent,
+        constraints: step.constraints ?? [],
+        model: step.model,
+        ctx: stepContext,
+        parent,
+        signal: input.signal,
+        timeoutMs,
+      })
+      return {
+        state: machineState.name,
+        step: step.name,
+        type,
+        outputSummary: result.outputSummary,
+        verdict: result.verdict ?? null,
+        data: undefined,
+      }
+    }
+    if (!input.parent) {
+      throw new Error(
+        `「${type}」步骤的独立验证需要会话上下文：请在会话中用 /workflow test <工作流> ${input.stateName} ${input.stepName} 验证`,
+      )
+    }
+    const executor = this.makeExecutor(input.workspace, input.parent, `test-${Date.now()}`, 1)
+    if (type === 'agent') {
+      const result = await executor.runAgentStep({
+        stepName: step.name,
+        agentName: step.agent ?? '',
+        agentSystemPrompt: '',
+        role,
+        task: step.task ?? '',
+        constraints: step.constraints ?? [],
+        preCommands: step.preCommands ?? [],
+        ctx: stepContext,
+        parent: input.parent,
+        signal: input.signal,
+        timeoutMs,
+      })
+      return {
+        state: machineState.name,
+        step: step.name,
+        type,
+        outputSummary: result.outputSummary,
+        verdict: result.verdict ?? null,
+        data: undefined,
+      }
+    }
+    const configFile = step.workflow?.trim() || step.subworkflow?.configFile?.trim() || ''
+    const child = await executor.runSubworkflowStep({
+      stepName: step.name,
+      configFile,
+      parent: input.parent,
+      signal: input.signal,
+      inheritedRequirements: requirements,
+    })
+    return {
+      state: machineState.name,
+      step: step.name,
+      type,
+      outputSummary: child.verdict?.rationale ?? `子工作流结束：${child.outcome}`,
+      verdict: child.verdict ?? null,
+      data: undefined,
+    }
+  }
+
+  /** Create the test sandbox directory (best effort). */
+  private ensureTestSandbox(dir: string): void {
+    try {
+      mkdirSync(join(dir, 'tmp'), { recursive: true })
+    } catch {
+      // Degrades to host-level execution.
+    }
   }
 
   /** The agent names available to workflow configs in this deployment. */
@@ -423,6 +588,7 @@ export default class AceHarnessService extends Service {
     // detaches foreground runs to a job instead (see below).
     controller.signal.addEventListener('abort', onStop, { once: true })
     this.active.set(runId, controller)
+    this.ensureSandboxDir(workspace, runId)
 
     const state = createRunState({
       runId,
@@ -576,6 +742,7 @@ export default class AceHarnessService extends Service {
     const onStop = (): void => linked.abort()
     // The run's own controller stops it; the turn signal detaches instead.
     controller.signal.addEventListener('abort', onStop, { once: true })
+    this.ensureSandboxDir(workspace, input.runId)
     this.active.set(input.runId, controller)
     const executor = this.makeExecutor(workspace, input.parent, input.runId, 1)
     const options = this.engineOptions(
@@ -842,6 +1009,7 @@ export default class AceHarnessService extends Service {
       load,
       pythonCommand: this.config.pythonCommand,
       scriptsHome: join(workspace, this.config.runDirName, 'scripts'),
+      sandboxDir: join(workspace, this.config.runDirName, 'runs', runId, 'sandbox'),
       resolveSubworkflow: async (configFile: string) => {
         const resolved = await this.resolveWorkflowConfig(workspace, configFile)
         if (!resolved) throw new EngineError(`子工作流「${configFile}」不存在`, 'NO_MATCH')
