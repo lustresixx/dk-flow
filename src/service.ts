@@ -1238,7 +1238,8 @@ export function jobOutcomeFor(result: RunResult): JobOutcomeLike {
 function summarizeRunForJob(result: RunResult): string {
   const lines = result.stateOutcomes.map((outcome) => `${outcome.state}→${outcome.verdict.verdict}`)
   const verdict = result.verdict ? ` · 最终结论 ${result.verdict}` : ''
-  return `运行 ${result.runId} ${result.status}${verdict}：${lines.join(', ') || '无状态'}${
+  const failed = result.failedStates.length > 0 ? ` · ⚠ 判定失败的状态: ${result.failedStates.join('、')}` : ''
+  return `运行 ${result.runId} ${result.status}${verdict}${failed}：${lines.join(', ') || '无状态'}${
     result.error ? ` · 错误: ${result.error}` : ''
   }`
 }

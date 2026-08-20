@@ -107,7 +107,7 @@ export function registerTools(ctx: Context, service: AceHarnessService): void {
     defineTool({
       name: 'run_workflow',
       description:
-        '运行一个 ACE 状态机工作流：按 workflow 实例文件名或内置模板 id 启动，模板会先用参数实例化。每一步由专属角色的子 Agent 执行（defender/attacker/judge 对抗评审），verdict 驱动状态转移。wait=true 时同步等待终态并返回完整结果。',
+        '运行一个 ACE 状态机工作流：按 workflow 实例文件名或内置模板 id 启动，模板会先用参数实例化。每一步由专属角色的子 Agent 执行（defender/attacker/judge 对抗评审），verdict 驱动状态转移。wait=true 时同步等待终态并返回完整结果。运行前先用 workflow_list 确认模板/实例的必填参数并在 params 中提供（例如 requirements=输入文本）；缺少必填参数时会向用户弹窗询问。结果中的 failedStates 表示判定失败的状态：即使终态为 completed/success，只要 failedStates 非空，就应如实告知用户该运行走了失败分支，而不是报告“整体成功”。',
       parameters: {
         workflow: {
           type: 'string',
@@ -207,6 +207,7 @@ export function registerTools(ctx: Context, service: AceHarnessService): void {
             status: result.status,
             verdict: result.verdict ?? null,
             error: result.error,
+            failedStates: result.failedStates,
             states: result.stateOutcomes.map((o) => ({ state: o.state, verdict: o.verdict.verdict })),
           }
           return value
@@ -287,6 +288,7 @@ export function registerTools(ctx: Context, service: AceHarnessService): void {
                 status: result.status,
                 verdict: result.verdict ?? null,
                 error: result.error,
+                failedStates: result.failedStates,
                 states: result.stateOutcomes.map((o) => ({ state: o.state, verdict: o.verdict.verdict })),
               } as JsonValue
             }

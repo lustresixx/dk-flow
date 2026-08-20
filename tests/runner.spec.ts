@@ -562,11 +562,15 @@ describe('runStateMachine', () => {
     expect(success.status).toBe('completed')
     expect(success.verdict).toBe('success')
     expect(success.stateOutcomes.map((o) => o.state)).toEqual(['检查', '转换', '完成'])
+    expect(success.failedStates).toEqual([])
 
     const failOptions: EngineRunOptions = { ...options, runId: 'run-script-fail', inputs: { requirements: '' } }
     const failed = await runStateMachine(failOptions)
     expect(failed.status).toBe('completed')
     expect(failed.stateOutcomes.map((o) => o.state)).toEqual(['检查', '失败'])
+    // 终态是失败分支的成功，但失败状态必须被显式标记出来。
+    expect(failed.verdict).toBe('success')
+    expect(failed.failedStates).toEqual(['检查'])
   })
 
   it('skips supervisor checkpoints on success-forward states under the risks policy', async () => {

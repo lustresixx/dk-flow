@@ -263,6 +263,9 @@ function buildResult(state: RunState): RunResult {
     status: state.status,
     verdict: state.stateOutcomes[state.stateOutcomes.length - 1]?.verdict.verdict,
     stateOutcomes: state.stateOutcomes,
+    failedStates: state.stateOutcomes
+      .filter((outcome) => outcome.verdict.verdict === 'fail')
+      .map((outcome) => outcome.state),
     error: state.error,
   }
 }

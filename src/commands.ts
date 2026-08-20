@@ -85,6 +85,9 @@ function renderResult(result: RunResult): string {
   for (const outcome of result.stateOutcomes) {
     lines.push(`  ${outcome.state} → ${outcome.verdict.verdict}`)
   }
+  if (result.failedStates.length > 0) {
+    lines.push(`⚠ 以下状态判定失败（业务未通过，即使运行已收尾）：${result.failedStates.join('、')}`)
+  }
   if (result.error) lines.push(`错误: ${result.error}`)
   return lines.join('\n')
 }

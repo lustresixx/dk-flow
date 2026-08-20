@@ -9,6 +9,7 @@ const base: RunResult = {
   stateOutcomes: [
     { state: '方案', verdict: { verdict: 'pass', issues: [], rationale: '' }, steps: [], finishedAt: 'x' },
   ],
+  failedStates: [],
   error: null,
 }
 
@@ -18,6 +19,19 @@ describe('jobOutcomeFor', () => {
     expect(outcome.status).toBe('completed')
     expect(outcome.detail).toBe('pass')
     expect(outcome.output).toContain('方案→pass')
+  })
+
+  it('flags fail-verdict states even when the run completed via a failure branch', () => {
+    const outcome = jobOutcomeFor({
+      ...base,
+      stateOutcomes: [
+        { state: '输入检查', verdict: { verdict: 'fail', issues: [], rationale: '' }, steps: [], finishedAt: 'x' },
+        { state: '失败', verdict: { verdict: 'success', issues: [], rationale: '' }, steps: [], finishedAt: 'x' },
+      ],
+      failedStates: ['输入检查'],
+    })
+    expect(outcome.status).toBe('completed')
+    expect(outcome.output).toContain('⚠ 判定失败的状态: 输入检查')
   })
 
   it('maps stopped runs to killed jobs', () => {

@@ -85,6 +85,8 @@ export interface RunResult {
   status: RunState['status']
   verdict?: Verdict
   stateOutcomes: StateOutcome[]
+  /** States that settled with a `fail` verdict (business failures), even when the run completed via a failure branch. */
+  failedStates: string[]
   error: string | null
 }
 

@@ -23,7 +23,10 @@ workflow:
           type: script
           script: |
             if (!context.requirements || context.requirements.trim() === '') {
-              return { output: '输入为空，无法分析', success: false }
+              return {
+                output: '输入为空，无法分析。请提供分析主题：--param requirements=你的主题（或在工作台参数表单填写）',
+                success: false,
+              }
             }
             return {
               output: '分析材料已就绪：\n主题：' + context.requirements.trim() + '\n要求：给出要点、风险与建议的结构化分析。',

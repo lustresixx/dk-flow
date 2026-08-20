@@ -426,6 +426,7 @@ export function apply(ctx: Context, config: Config): void {
               status: result.status,
               verdict: result.verdict ?? null,
               error: result.error,
+              failedStates: result.failedStates,
               states: result.stateOutcomes.map((outcome) => ({
                 state: outcome.state,
                 verdict: outcome.verdict.verdict,

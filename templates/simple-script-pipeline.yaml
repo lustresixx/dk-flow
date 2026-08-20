@@ -16,7 +16,10 @@ workflow:
           script: |
             // 输入检查：context.requirements 是本次运行输入
             if (!context.requirements || context.requirements.trim() === '') {
-              return { output: '输入为空，无法继续', success: false }
+              return {
+                output: '输入为空，无法继续。请提供输入文本：--param requirements=你的文本（或在工作台参数表单填写）',
+                success: false,
+              }
             }
             return {
               output: '输入检查通过：' + context.requirements.trim(),
