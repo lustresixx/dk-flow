@@ -15,8 +15,9 @@ import { mkdirSync } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
 import { isAbsolute, join, resolve } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
-import type { Agent, AgentRegistry } from '@deepseek-ai/dsh-agent'
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { SessionId } from '@deepseek-ai/dsh-session'
+import { apiRunnerParent, defaultHostServices, type HostServices } from './host-services.js'
 import {
   firstCommentLine,
   latestTemplate,
@@ -148,9 +149,12 @@ export default class AceHarnessService extends Service {
   private readonly lifecycle: RunLifecycle
   /** Host face handed to the step-executor factory. */
   private readonly executors: StepExecutorHost
+  /** Host capabilities, resolved in one place (P2-3). */
+  private readonly host: HostServices
 
-  constructor(ctx: Context, config: AceHarnessConfig = {}) {
+  constructor(ctx: Context, config: AceHarnessConfig = {}, host?: HostServices) {
     super(ctx, 'ace-harness')
+    this.host = host ?? defaultHostServices(ctx)
     this.config = {
       subagentProvider: config.subagentProvider ?? 'spawn',
       model: config.model ?? '',
@@ -173,6 +177,7 @@ export default class AceHarnessService extends Service {
       config: this.config,
       registry: this.registry,
       persistence: this.persistence,
+      jobs: () => this.host.jobs(),
       workspaceOf: (parent) => this.workspaceOf(parent),
       resolveWorkflowConfig: (workspace, configFile) => this.resolveWorkflowConfig(workspace, configFile),
       makeExecutor: (workspace, parent, runId, depth) => this.makeExecutor(workspace, parent, runId, depth),
@@ -577,11 +582,7 @@ export default class AceHarnessService extends Service {
       if (input.mode === 'job') {
         throw new Error('mode=job 需要 sessionId：后台作业必须挂在真实会话上')
       }
-      parent = {
-        id: 'api-runner' as unknown as SessionId,
-        session: { header: { cwd: input.workspace } },
-        options: {},
-      } as unknown as Agent
+      parent = apiRunnerParent(input.workspace)
     }
     return this.startRun({
       parent,
@@ -594,7 +595,7 @@ export default class AceHarnessService extends Service {
 
   /** Live root sessions that can host session-bound runs (approval gates work). */
   listLiveSessions(): Array<{ id: string; cwd: string; createdAt: number }> {
-    const registry = this.ctx.get('agents') as Pick<AgentRegistry, 'roots'> | undefined
+    const registry = this.host.agents()
     return (registry?.roots() ?? []).map((agent) => ({
       id: agent.session.id,
       cwd: agent.session.header.cwd ?? '',
@@ -604,7 +605,7 @@ export default class AceHarnessService extends Service {
 
   /** Resolve a session id to its exact live root agent (runs bind to roots only). */
   private requireLiveRoot(sessionId: string): Agent {
-    const registry = this.ctx.get('agents') as Pick<AgentRegistry, 'get' | 'roots'> | undefined
+    const registry = this.host.agents()
     const agent = registry?.get(sessionId as SessionId)
     if (!agent) {
       throw new Error(`会话「${sessionId}」不在线或不存在；可用 GET /plugins/dsh-ace-harness/sessions 查看在线会话`)
@@ -617,7 +618,7 @@ export default class AceHarnessService extends Service {
 
   /** The workspace root the service uses for one agent. */
   workspaceOf(agent: Agent): string {
-    return workspaceRoot(agent.session.header.cwd, process.cwd())
+    return workspaceRoot(agent.session.header.cwd, this.host.processCwd)
   }
 
   /** Whether the workspace opted into the SQLite run archive. */

@@ -85,6 +85,8 @@ export interface RunLifecycleDeps {
   registry: RunRegistry
   /** The per-run persist pipeline. */
   persistence: RunPersistence
+  /** Jobs registry lookup (lazy: the service may mount after activation). */
+  jobs(): JobRegistryFace | undefined
   /** The workspace root used for one agent. */
   workspaceOf(parent: Agent): string
   /** Resolve a workflow reference (subworkflow + resume paths). */
@@ -352,7 +354,7 @@ export class RunLifecycle {
     begin: () => Promise<RunResult>,
     workflowName: string,
   ): { jobId: JobId; result: Promise<RunResult> } {
-    const jobRegistry = this.deps.ctx.get('jobs') as JobRegistryFace | undefined
+    const jobRegistry = this.deps.jobs()
     if (!jobRegistry) {
       controller.abort()
       throw new Error('当前 profile 未挂载 jobs 服务，无法以后台 job 方式运行')
