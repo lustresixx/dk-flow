@@ -325,6 +325,7 @@ export function EditorPane(props: EditorPaneProps): JSX.Element {
             fitView
             zoomOnScroll={false}
             panOnScroll
+            zoomActivationKeyCode="Control"
           >
             <Background variant={BackgroundVariant.Dots} gap={22} size={1.5} />
             <Controls />

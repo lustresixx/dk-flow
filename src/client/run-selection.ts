@@ -20,6 +20,25 @@ export interface SelectableRun {
   startedAt: string
 }
 
+/** The run fields session gating reads. */
+export interface SessionOwnedRun {
+  /** Null/undefined marks API-synthetic runs, which never pop the sidebar. */
+  parentSessionId?: string | null
+}
+
+/**
+ * Keep only runs owned by the currently open session. The live popup follows
+ * the session that started the run (like the AgentTeams activity floater):
+ * with no session open, or for API-synthetic parents, nothing is returned.
+ */
+export function sessionRuns<T extends SessionOwnedRun>(
+  runs: readonly T[],
+  currentSessionId: string | undefined,
+): T[] {
+  if (currentSessionId === undefined) return []
+  return runs.filter((run) => run.parentSessionId === currentSessionId)
+}
+
 /**
  * Choose which run the launcher follows:
  * - any active run wins (a new run takes over a finished one);

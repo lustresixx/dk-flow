@@ -41,6 +41,11 @@ export interface StateTemplateDto {
 
 export interface StateRunDto {
   runId: string
+  /**
+   * Session that started the run (null for API/synthetic parents). The live
+   * run popup only appears while this session is the one currently open.
+   */
+  parentSessionId: string | null
   workflowName: string
   status: string
   currentState: string | null

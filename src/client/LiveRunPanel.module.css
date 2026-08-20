@@ -1,91 +1,195 @@
+/* Live run sidebar. Position & form follow the AgentTeams activity panel:
+   a fixed top-right glass panel the conversation column yields room for (via
+   the body-level open marker), token-driven surfaces, and reduced-motion /
+   narrow-viewport fallbacks. Content (state diagram + step log) keeps the
+   ACE identity, restyled onto the same design tokens. */
+
+:global(html) {
+  --ace-harness-panel-width: 430px;
+  --ace-harness-panel-top: 64px;
+  --ace-harness-panel-bottom-gap: 40px;
+  /* Stay left of the better-sidebar plugin's width variable when present. */
+  --ace-harness-panel-right: calc(16px + var(--dsh-sidebar-width, 0px));
+  --ace-harness-panel-gap: 14px;
+  --ace-harness-panel-shift: calc(var(--ace-harness-panel-width) + 16px + var(--ace-harness-panel-gap));
+}
+
+/* The web shell owns no top-right slot. While this body-portal panel is
+   expanded, its global marker lets only the center conversation column yield
+   room; the sidebar stays anchored. */
+:global(html[data-ace-harness-panel-open]) :global([data-phase='active']) {
+  box-sizing: border-box;
+  padding-right: var(--ace-harness-panel-shift);
+}
+
+:global([data-phase='active']) {
+  transition: padding-right 360ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: padding-right;
+}
+
+/* Token bridge (same recipe as dsh-agent-teams): the older DSW vocabulary
+   maps onto harness layer/border and primary state tokens, scoped to this
+   panel so every declaration stays valid without mutating the host theme. */
+.panel {
+  --dsw-alias-line-normal: var(--dsw-static-neutral-bluish-150, #e7e9ee);
+  --dsw-alias-line-strong: color-mix(
+    in srgb,
+    var(--dsw-static-neutral-bluish-200, #e1e5ee) 50%,
+    var(--dsw-static-neutral-bluish-300, #cfd3d6)
+  );
+  --dsw-alias-bg-module: var(--dsw-alias-bg-layer-1, #ffffff);
+  --dsw-alias-bg-fill-neutral: var(--dsw-static-neutral-bluish-100, #eef0f4);
+  --dsw-alias-bg-fill-business: var(--dsw-alias-state-business-primary, #4d6bfe);
+  --dsw-alias-bg-fill-success: var(--dsw-alias-state-success-primary, #12a150);
+  --dsw-alias-bg-fill-warning: var(--dsw-alias-state-warn-primary, #e08700);
+  --dsw-alias-bg-fill-danger: var(--dsw-alias-state-error-primary, #e5484d);
+  --dsw-alias-state-success: var(--dsw-alias-state-success-primary, #12a150);
+  --dsw-alias-state-warning: var(--dsw-alias-state-warn-primary, #e08700);
+  --dsw-alias-state-danger: var(--dsw-alias-state-error-primary, #e5484d);
+  --dsw-alias-label-on-fill: var(--dsw-alias-label-primary-inverted, #ffffff);
+}
+
 .panel {
   position: fixed;
-  top: 64px;
-  right: 16px;
-  width: 430px;
-  max-height: calc(100vh - 140px);
-  z-index: 9900;
+  top: var(--ace-harness-panel-top);
+  right: var(--ace-harness-panel-right);
+  z-index: 2147483000;
   display: flex;
   flex-direction: column;
-  border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: linear-gradient(165deg, #1d1f2a 0%, #252834 60%, #1d1f2a 100%);
-  color: #e6e6ee;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  width: min(var(--ace-harness-panel-width), calc(100vw - 24px));
+  max-height: calc(100dvh - var(--ace-harness-panel-top) - var(--ace-harness-panel-bottom-gap));
+  box-sizing: border-box;
   overflow: hidden;
-  font-family: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-line-strong) 58%, transparent);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--dsw-alias-bg-module) 95%, transparent);
+  backdrop-filter: blur(20px) saturate(1.08);
+  box-shadow:
+    0 12px 32px color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent),
+    0 32px 72px color-mix(in srgb, var(--dsw-alias-label-primary) 16%, transparent);
+  color: var(--dsw-alias-label-primary);
+  font-family: inherit;
+  animation: acePanelIn 180ms ease-out;
+}
+
+@keyframes acePanelIn {
+  from { opacity: 0; transform: translateY(-6px) scale(0.99); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes acePulse {
+  0%, 100% { opacity: 0.42; }
+  50% { opacity: 1; }
 }
 
 .header {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  min-height: 44px;
+  padding: 0 10px 0 16px;
+  border-bottom: 1px solid var(--dsw-alias-line-normal);
 }
 
 .title {
   flex: 1;
   min-width: 0;
-  font-size: 13px;
-  font-weight: 700;
-  white-space: nowrap;
   overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .status {
-  font-size: 11px;
-  padding: 2px 10px;
+  flex: none;
+  padding: 1px 8px;
+  border: 1px solid var(--dsw-alias-line-normal);
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  color: #9a9ab0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 16px;
   white-space: nowrap;
 }
 
 .status[data-status='running'],
 .status[data-status='preparing'] {
-  color: #7fb3ff;
-  border-color: rgba(127, 179, 255, 0.4);
+  border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary) 45%, var(--dsw-alias-line-normal));
+  color: var(--dsw-alias-state-business-primary);
 }
 
 .status[data-status='waiting-human'] {
-  color: #ffd07a;
-  border-color: rgba(255, 208, 122, 0.4);
+  border-color: color-mix(in srgb, var(--dsw-alias-state-warning) 52%, var(--dsw-alias-line-normal));
+  color: var(--dsw-alias-state-warning);
+}
+
+.status[data-status='completed'] {
+  border-color: color-mix(in srgb, var(--dsw-alias-state-success) 48%, var(--dsw-alias-line-normal));
+  color: var(--dsw-alias-state-success);
+}
+
+.status[data-status='failed'],
+.status[data-status='crashed'] {
+  border-color: color-mix(in srgb, var(--dsw-alias-state-danger) 56%, var(--dsw-alias-line-normal));
+  color: var(--dsw-alias-state-danger);
 }
 
 .headerButton {
-  border: none;
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
   background: transparent;
-  color: #9a9ab0;
+  color: var(--dsw-alias-label-tertiary);
   cursor: pointer;
-  font-size: 14px;
-  padding: 0 4px;
+  font-size: 13px;
+  transition: background-color 120ms ease, color 120ms ease, transform 120ms ease;
+}
+
+.headerButton:hover {
+  background: var(--dsw-alias-bg-fill-neutral);
+  color: var(--dsw-alias-label-primary);
+}
+
+.headerButton:active {
+  transform: scale(0.94);
 }
 
 .stopButton {
-  border: 1px solid rgba(248, 113, 113, 0.5);
-  background: rgba(248, 113, 113, 0.14);
-  color: #ff9d9d;
-  border-radius: 8px;
+  flex: none;
   padding: 3px 12px;
-  font-size: 12px;
-  font-weight: 700;
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-state-danger) 45%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--dsw-alias-state-danger) 12%, transparent);
+  color: var(--dsw-alias-state-danger);
   cursor: pointer;
+  font-size: 11.5px;
+  font-weight: 600;
+  transition: background-color 120ms ease;
 }
 
 .stopButton:hover {
-  background: rgba(248, 113, 113, 0.28);
+  background: color-mix(in srgb, var(--dsw-alias-state-danger) 22%, transparent);
 }
 
 .body {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 10px 12px 12px;
   min-height: 0;
+  padding: 10px 12px 12px;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .diagramWrap {
@@ -94,10 +198,10 @@
 
 .diagramOverlay {
   position: absolute;
-  top: 8px;
-  left: 8px;
-  right: 8px;
   z-index: 5;
+  top: 8px;
+  right: 8px;
+  left: 8px;
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -113,93 +217,190 @@
 
 .progressChip,
 .stateChip {
-  font-size: 11px;
-  font-weight: 700;
-  padding: 3px 10px;
+  padding: 2px 10px;
+  border: 1px solid var(--dsw-alias-line-normal);
   border-radius: 999px;
-  background: rgba(20, 22, 30, 0.82);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: #f3f4f6;
-  backdrop-filter: blur(4px);
+  background: color-mix(in srgb, var(--dsw-alias-bg-module) 86%, transparent);
+  backdrop-filter: blur(6px);
+  color: var(--dsw-alias-label-primary);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 16px;
   white-space: nowrap;
 }
 
 .stateChip[data-active='true'] {
-  color: #7fb3ff;
-  border-color: rgba(127, 179, 255, 0.45);
+  border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary) 45%, var(--dsw-alias-line-normal));
+  color: var(--dsw-alias-state-business-primary);
 }
 
 .miniTrack {
   height: 5px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.12);
   overflow: hidden;
+  border-radius: 999px;
+  background: var(--dsw-alias-line-strong);
 }
 
 .miniFill {
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, #4f5bd5, #34d399);
+  background: linear-gradient(90deg, var(--dsw-alias-state-business-primary), var(--dsw-alias-state-success));
   transition: width 0.4s ease;
 }
 
 .diagram {
   height: 320px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  border: 1px solid var(--dsw-alias-line-normal);
   border-radius: 10px;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--dsw-alias-bg-module-platform);
 }
 
+/* React Flow chrome on tokens */
+.diagram :global(.react-flow__controls) {
+  overflow: hidden;
+  border: 1px solid var(--dsw-alias-line-normal);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--dsw-alias-label-primary) 10%, transparent);
+}
+
+.diagram :global(.react-flow__controls-button) {
+  border-bottom: 1px solid var(--dsw-alias-line-normal);
+  background: var(--dsw-alias-bg-module);
+}
+
+.diagram :global(.react-flow__controls-button:hover) {
+  background: var(--dsw-alias-bg-fill-neutral);
+}
+
+.diagram :global(.react-flow__controls-button svg) {
+  fill: var(--dsw-alias-label-secondary);
+}
+
+.diagram :global(.react-flow__attribution) {
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* Compact state node: state dot + name + badges, AgentTeams dagNode recipe. */
 .diagramNode {
   display: flex;
   align-items: center;
-  gap: 5px;
-  max-width: 180px;
-  border: 1.5px solid rgba(255, 255, 255, 0.16);
-  border-radius: 10px;
-  background: #2a2d3a;
-  color: #c6c6da;
-  padding: 5px 9px;
+  gap: 6px;
+  max-width: 190px;
+  padding: 5px 10px;
+  box-sizing: border-box;
+  border: 1px solid var(--dsw-alias-line-normal);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-module);
+  color: var(--dsw-alias-label-primary);
   font-size: 11px;
+  transition: border-color 140ms ease, background-color 140ms ease;
 }
 
-.diagramNode[data-verdict='success'],
-.diagramNode[data-verdict='pass'] {
-  border-color: #34d399;
-  background: rgba(52, 211, 153, 0.1);
-  color: #d9f7ea;
+.nodeDot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 2px;
+  background: var(--dsw-alias-line-strong);
+}
+
+.diagramNode[data-verdict='success'] {
+  border-color: color-mix(in srgb, var(--dsw-alias-state-success) 48%, var(--dsw-alias-line-normal));
+  background: color-mix(in srgb, var(--dsw-alias-state-success) 7%, var(--dsw-alias-bg-module));
+}
+
+.diagramNode[data-verdict='success'] .nodeDot {
+  background: var(--dsw-alias-state-success);
 }
 
 .diagramNode[data-verdict='fail'] {
-  border-color: #f87171;
-  background: rgba(248, 113, 113, 0.1);
-  color: #ffe1e1;
+  border-color: color-mix(in srgb, var(--dsw-alias-state-danger) 56%, var(--dsw-alias-line-normal));
+  background: color-mix(in srgb, var(--dsw-alias-state-danger) 7%, var(--dsw-alias-bg-module));
+}
+
+.diagramNode[data-verdict='fail'] .nodeDot {
+  background: var(--dsw-alias-state-danger);
 }
 
 .diagramNode[data-verdict='conditional_pass'] {
-  border-color: #fbbf24;
-  background: rgba(251, 191, 36, 0.1);
+  border-color: color-mix(in srgb, var(--dsw-alias-state-warning) 52%, var(--dsw-alias-line-normal));
+  background: color-mix(in srgb, var(--dsw-alias-state-warning) 7%, var(--dsw-alias-bg-module));
+}
+
+.diagramNode[data-verdict='conditional_pass'] .nodeDot {
+  background: var(--dsw-alias-state-warning);
 }
 
 .diagramNode[data-current='true'] {
-  border-color: #7fb3ff;
-  background: rgba(127, 179, 255, 0.14);
-  animation: pulse 1.6s ease-in-out infinite;
+  border-color: var(--dsw-alias-state-business-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 7%, var(--dsw-alias-bg-module));
+  animation: aceCurrentRing 1.6s ease-in-out infinite;
 }
 
-@keyframes pulse {
-  0%, 100% { box-shadow: 0 0 0 3px rgba(127, 179, 255, 0.35); }
-  50% { box-shadow: 0 0 0 10px rgba(127, 179, 255, 0.14); }
+.diagramNode[data-current='true'] .nodeDot {
+  background: var(--dsw-alias-state-business-primary);
+  animation: acePulse 1.25s ease-in-out infinite;
+}
+
+@keyframes aceCurrentRing {
+  0%, 100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-state-business-primary) 30%, transparent); }
+  50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--dsw-alias-state-business-primary) 12%, transparent); }
+}
+
+.nodeName {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.badge,
+.badgeFinal,
+.runningBadge {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 14px;
+  white-space: nowrap;
+}
+
+.badge {
+  background: var(--dsw-alias-bg-fill-business);
+  color: var(--dsw-alias-label-on-fill);
+}
+
+.badgeFinal {
+  background: var(--dsw-alias-bg-fill-success);
+  color: var(--dsw-alias-label-on-fill);
 }
 
 .runningBadge {
-  font-size: 9px;
+  background: var(--dsw-alias-bg-fill-business);
+  color: var(--dsw-alias-label-on-fill);
+  animation: acePulse 1.25s ease-in-out infinite;
+}
+
+.nodeVerdict {
+  flex: none;
+  font-size: 11px;
   font-weight: 700;
-  padding: 1px 7px;
-  border-radius: 999px;
-  background: #7fb3ff;
-  color: #0b1e3d;
-  white-space: nowrap;
+}
+
+.nodeVerdict[data-verdict='success'] {
+  color: var(--dsw-alias-state-success);
+}
+
+.nodeVerdict[data-verdict='fail'] {
+  color: var(--dsw-alias-state-danger);
+}
+
+.nodeVerdict[data-verdict='conditional_pass'] {
+  color: var(--dsw-alias-state-warning);
 }
 
 .handle {
@@ -207,41 +408,43 @@
   height: 6px;
   min-width: 6px;
   min-height: 6px;
-  background: #6b7280;
   border: none;
+  background: var(--dsw-alias-label-tertiary);
   opacity: 0;
 }
 
-.badge,
-.badgeFinal {
-  font-size: 9px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  color: #ffffff;
-  white-space: nowrap;
+/* Edges: neutral until the source state settles; the taken branch lights up
+   in its verdict color, siblings dim (executed-path highlight). */
+.edge :global(.react-flow__edge-path) {
+  stroke: var(--dsw-alias-line-strong);
+  stroke-width: 1.2;
+  opacity: 0.7;
+  transition: opacity 140ms ease, stroke 140ms ease, stroke-width 140ms ease;
 }
 
-.badge {
-  background: #4f5bd5;
+.edgeTaken :global(.react-flow__edge-path) {
+  stroke: var(--dsw-alias-state-business-primary);
+  stroke-width: 1.8;
+  opacity: 1;
 }
 
-.badgeFinal {
-  background: #34d399;
-  color: #0b3324;
+.edgeTaken.edge_success :global(.react-flow__edge-path) {
+  stroke: var(--dsw-alias-state-success);
 }
 
-.nodeName {
-  font-weight: 700;
-  font-size: 12px;
-  white-space: nowrap;
+.edgeTaken.edge_fail :global(.react-flow__edge-path) {
+  stroke: var(--dsw-alias-state-danger);
 }
 
-.nodeVerdict {
-  font-size: 11px;
-  font-weight: 700;
-  opacity: 0.9;
+.edgeTaken.edge_conditional_pass :global(.react-flow__edge-path) {
+  stroke: var(--dsw-alias-state-warning);
 }
 
+.edgeDimmed :global(.react-flow__edge-path) {
+  opacity: 0.24;
+}
+
+/* Step log */
 .stepLog {
   display: flex;
   flex-direction: column;
@@ -249,82 +452,110 @@
   max-height: 240px;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .stepLogEmpty {
-  color: #9a9ab0;
-  font-size: 12px;
   padding: 4px 2px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
 }
 
 .stepLogItem {
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
-  background: rgba(0, 0, 0, 0.22);
-  padding: 8px 10px;
   display: flex;
   flex-direction: column;
   gap: 5px;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-line-normal);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-module-platform);
 }
 
 .stepLogItem[data-finished='false'] {
-  border-color: rgba(127, 179, 255, 0.35);
+  border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary) 40%, var(--dsw-alias-line-normal));
 }
 
 .stepLogHead {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
 }
 
 .stepLogName {
+  color: var(--dsw-alias-label-primary);
   font-size: 12px;
-  font-weight: 700;
-  color: #f3f4f6;
+  font-weight: 600;
 }
 
 .stepLogAgent {
+  color: var(--dsw-alias-label-tertiary);
   font-size: 11px;
-  color: #9a9ab0;
+}
+
+.stepLogRole,
+.stepLogDone,
+.stepLogLive {
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 15px;
 }
 
 .stepLogRole {
-  font-size: 10px;
-  padding: 1px 8px;
-  border-radius: 999px;
-  color: #7fb3ff;
-  border: 1px solid rgba(127, 179, 255, 0.35);
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-state-business-primary) 40%, var(--dsw-alias-line-normal));
+  color: var(--dsw-alias-state-business-primary);
 }
 
 .stepLogDone {
-  font-size: 10px;
-  padding: 1px 8px;
-  border-radius: 999px;
-  color: #34d399;
-  border: 1px solid rgba(52, 211, 153, 0.4);
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-state-success) 45%, var(--dsw-alias-line-normal));
+  color: var(--dsw-alias-state-success);
 }
 
 .stepLogLive {
-  font-size: 10px;
-  padding: 1px 8px;
-  border-radius: 999px;
-  color: #7fb3ff;
-  border: 1px solid rgba(127, 179, 255, 0.4);
-  animation: blink 1.2s ease-in-out infinite;
-}
-
-@keyframes blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.45; }
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-state-business-primary) 45%, var(--dsw-alias-line-normal));
+  color: var(--dsw-alias-state-business-primary);
+  animation: acePulse 1.2s ease-in-out infinite;
 }
 
 .stepLogText {
   margin: 0;
-  color: #c6c6da;
+  color: var(--dsw-alias-label-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11px;
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-all;
-  font-family: 'Cascadia Code', Consolas, 'Courier New', monospace;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global([data-phase='active']),
+  .panel,
+  .diagramNode,
+  .runningBadge,
+  .nodeDot,
+  .stepLogLive {
+    animation: none;
+    transition: none;
+  }
+}
+
+@media (max-width: 960px) {
+  :global(html[data-ace-harness-panel-open]) :global([data-phase='active']) {
+    padding-right: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  :global(html) {
+    --ace-harness-panel-right: 10px;
+    --ace-harness-panel-top: 56px;
+    --ace-harness-panel-bottom-gap: 32px;
+  }
+
+  .panel {
+    left: 10px;
+    width: auto;
+  }
 }

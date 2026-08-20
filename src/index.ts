@@ -285,6 +285,8 @@ export function apply(ctx: Context, config: Config): void {
             title: roots[index]?.workspace ?? entry.path,
             runs: entry.runs.map(({ run, topology }) => ({
               runId: run.id,
+              /** Owning session: the client gates the live popup on it. */
+              parentSessionId: run.parentSessionId ?? null,
               workflowName: run.workflowName,
               status: run.status,
               currentState: run.currentState,

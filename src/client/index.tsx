@@ -42,7 +42,7 @@ export function apply(ctx: ClientContext): void {
   const root = createRoot(host)
   root.render(
     <AcePanel
-      currentSessionId={(): string | undefined => ctx.sessions.list.getSnapshot().current}
+      sessionsList={ctx.sessions.list}
       send={(text: string): Promise<boolean> => sendCommand(ctx, text)}
     />,
   )

@@ -576,8 +576,10 @@ function RunTopology(props: { run: StateRunDto }): JSX.Element | null {
           nodesDraggable={false}
           nodesConnectable={false}
           elementsSelectable={false}
-          zoomOnScroll={false}
+          zoomOnScroll
           panOnDrag
+          minZoom={0.4}
+          maxZoom={2.5}
         >
           <Background variant={BackgroundVariant.Dots} gap={18} size={1.2} />
           <Controls showInteractive={false} />

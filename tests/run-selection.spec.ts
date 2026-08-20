@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { selectRun, type RunSelection, type SelectableRun } from '../src/client/run-selection.ts'
+import { selectRun, sessionRuns, type RunSelection, type SelectableRun } from '../src/client/run-selection.ts'
 
 const NONE: RunSelection = { runId: null, active: false }
 
@@ -56,5 +56,31 @@ describe('selectRun', () => {
   it('returns the same selection object when nothing changed', () => {
     const current: RunSelection = { runId: 'run-1', active: true }
     expect(selectRun(current, null, [active('run-1')])).toBe(current)
+  })
+})
+
+describe('sessionRuns', () => {
+  const owned = (runId: string, parentSessionId: string | null): SelectableRun & { parentSessionId: string | null } => ({
+    runId,
+    status: 'running',
+    startedAt: '2026-01-01T00:00:02Z',
+    parentSessionId,
+  })
+
+  it('keeps only runs owned by the current session', () => {
+    const runs = [owned('run-a', 'session-1'), owned('run-b', 'session-2')]
+    expect(sessionRuns(runs, 'session-1').map((run) => run.runId)).toEqual(['run-a'])
+  })
+
+  it('returns nothing when no session is open', () => {
+    expect(sessionRuns([owned('run-a', 'session-1')], undefined)).toEqual([])
+  })
+
+  it('hides API-synthetic runs (null parent) from every session', () => {
+    expect(sessionRuns([owned('run-api', null)], 'session-1')).toEqual([])
+  })
+
+  it('returns nothing when the current session owns no run', () => {
+    expect(sessionRuns([owned('run-b', 'session-2')], 'session-1')).toEqual([])
   })
 })
