@@ -1,5 +1,5 @@
 /**
- * Built-in resource catalog: the ported ACE agent roster and the three
+ * Built-in resource catalog: the ported ACE agent roster and the packaged
  * workflow templates. Resources ship next to the compiled lib (see the
  * package `files` list) and are resolved relative to this module.
  * @module dsh-ace-harness/catalog

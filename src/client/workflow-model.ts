@@ -116,9 +116,10 @@ export interface StepDraft {
   agent: string
   role: '' | 'attacker' | 'defender' | 'judge'
   task: string
-  type: 'agent' | 'script' | 'subworkflow'
+  type: 'agent' | 'script' | 'subworkflow' | 'llm'
   workflowRef: string
   script: string
+  model: string
   parallelGroup: string
 }
 
@@ -133,6 +134,7 @@ export function stepToDraft(step: WorkflowStep): StepDraft {
     type: step.type ?? 'agent',
     workflowRef: step.workflow ?? step.subworkflow?.configFile ?? '',
     script: step.script ?? '',
+    model: step.model ?? '',
     parallelGroup: step.parallelGroup ?? '',
   }
 }
@@ -156,11 +158,23 @@ export function draftToStep(draft: StepDraft): WorkflowStep {
       parallelGroup: draft.parallelGroup === '' ? undefined : draft.parallelGroup,
     }
   }
+  if (draft.type === 'llm') {
+    return {
+      name: draft.name,
+      type: 'llm',
+      agent: draft.agent === '' ? undefined : draft.agent,
+      task: draft.task,
+      role: draft.role === '' ? undefined : draft.role,
+      model: draft.model === '' ? undefined : draft.model,
+      parallelGroup: draft.parallelGroup === '' ? undefined : draft.parallelGroup,
+    }
+  }
   return {
     name: draft.name,
     agent: draft.agent,
     task: draft.task,
     role: draft.role === '' ? undefined : draft.role,
+    model: draft.model === '' ? undefined : draft.model,
     parallelGroup: draft.parallelGroup === '' ? undefined : draft.parallelGroup,
   }
 }

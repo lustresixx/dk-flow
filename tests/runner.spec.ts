@@ -33,6 +33,16 @@ function scriptedExecutor(
       if (typeof entry === 'string') return { outputSummary: entry }
       return { outputSummary: entry.rationale, verdict: entry }
     },
+    async runLlmStep(input) {
+      const key = `${input.ctx.state}/${input.stepName}`
+      calls.push(`llm:${key}`)
+      const entry = script[key]
+      if (entry === undefined) {
+        return { outputSummary: `ok llm ${key}`, verdict: V('pass') }
+      }
+      if (typeof entry === 'string') return { outputSummary: entry }
+      return { outputSummary: entry.rationale, verdict: entry }
+    },
     async runSubworkflowStep(input) {
       calls.push(`sub:${input.stepName}`)
       return { outcome: 'completed', verdict: V('pass') }
@@ -164,6 +174,9 @@ describe('runStateMachine', () => {
         }
         return { outputSummary: '', verdict: V('pass') }
       },
+      async runLlmStep() {
+        throw new Error('该测试不应启动 LLM 步骤')
+      },
       async runSubworkflowStep() {
         return { outcome: 'completed', verdict: V('pass') }
       },
@@ -201,6 +214,9 @@ describe('runStateMachine', () => {
         }
         return { outputSummary: '', verdict: V('pass') }
       },
+      async runLlmStep() {
+        throw new Error('该测试不应启动 LLM 步骤')
+      },
       async runSubworkflowStep() {
         return { outcome: 'completed', verdict: V('pass') }
       },
@@ -230,6 +246,9 @@ describe('runStateMachine', () => {
         // 执行 state keeps failing, bouncing back to 方案 forever.
         if (input.ctx.state === '执行') return { outputSummary: '', verdict: V('fail') }
         return { outputSummary: '', verdict: V('pass') }
+      },
+      async runLlmStep() {
+        throw new Error('该测试不应启动 LLM 步骤')
       },
       async runSubworkflowStep() {
         return { outcome: 'completed', verdict: V('pass') }
@@ -300,6 +319,9 @@ describe('runStateMachine', () => {
         // Live executions pass; the persisted state already carries the
         // historical 验收 fail that produced the waiting-human decision point.
         return { outputSummary: '', verdict: V('pass') }
+      },
+      async runLlmStep() {
+        throw new Error('该测试不应启动 LLM 步骤')
       },
       async runSubworkflowStep() {
         return { outcome: 'completed', verdict: V('pass') }
@@ -400,6 +422,9 @@ describe('runStateMachine', () => {
     const executor: StepExecutor = {
       async runAgentStep() {
         return { outputSummary: '', verdict: V('pass') }
+      },
+      async runLlmStep() {
+        throw new Error('该测试不应启动 LLM 步骤')
       },
       async runSubworkflowStep() {
         return { outcome: 'completed', verdict: V('pass') }
@@ -510,6 +535,9 @@ describe('runStateMachine', () => {
       async runAgentStep() {
         return { outputSummary: '', verdict: V('pass') }
       },
+      async runLlmStep() {
+        throw new Error('该测试不应启动 LLM 步骤')
+      },
       async runSubworkflowStep() {
         return { outcome: 'completed', verdict: V('pass') }
       },
@@ -547,6 +575,9 @@ describe('runStateMachine', () => {
         }
         return { outputSummary: '', verdict: V('pass') }
       },
+      async runLlmStep() {
+        throw new Error('该测试不应启动 LLM 步骤')
+      },
       async runSubworkflowStep() {
         return { outcome: 'completed', verdict: V('pass') }
       },
@@ -579,6 +610,9 @@ describe('runStateMachine', () => {
       async runAgentStep() {
         return { outputSummary: '', verdict: V('pass') }
       },
+      async runLlmStep() {
+        throw new Error('该测试不应启动 LLM 步骤')
+      },
       async runSubworkflowStep() {
         return { outcome: 'completed', verdict: V('pass') }
       },
@@ -606,6 +640,98 @@ describe('runStateMachine', () => {
     expect(checkpoints).toBe(3)
   })
 
+  it('dispatches llm steps to runLlmStep and flows binary transitions', async () => {
+    const config: WorkflowConfig = {
+      workflow: {
+        name: 'LLM 判定',
+        mode: 'state-machine',
+        maxTransitions: 10,
+        states: [
+          {
+            name: '判定',
+            steps: [
+              {
+                name: '快速判定',
+                type: 'llm',
+                model: 'fast-model',
+                task: '判断输入是否合法',
+                role: 'judge',
+              },
+            ],
+            transitions: [
+              { to: '通过', condition: { verdict: 'success' }, priority: 10 },
+              { to: '拒绝', condition: { verdict: 'fail' }, priority: 20 },
+            ],
+            isInitial: true,
+            isFinal: false,
+          },
+          {
+            name: '通过',
+            steps: [{ name: '记录', type: 'script', script: 'return { output: "通过", success: true }' }],
+            transitions: [],
+            isInitial: false,
+            isFinal: true,
+          },
+          {
+            name: '拒绝',
+            steps: [{ name: '记录', type: 'script', script: 'return { output: "拒绝", success: true }' }],
+            transitions: [],
+            isInitial: false,
+            isFinal: true,
+          },
+        ],
+      },
+    }
+    const { result, calls } = await run(config, {
+      '判定/快速判定': V('success', '输入合法'),
+    })
+    expect(result.status).toBe('completed')
+    expect(result.verdict).toBe('success')
+    expect(calls).toContain('llm:判定/快速判定')
+    expect(calls).not.toContain('判定/快速判定')
+    expect(result.stateOutcomes.map((o) => o.state)).toEqual(['判定', '通过'])
+  })
+
+  it('routes llm steps to the fail branch on a fail verdict', async () => {
+    const config: WorkflowConfig = {
+      workflow: {
+        name: 'LLM 判定失败',
+        mode: 'state-machine',
+        maxTransitions: 10,
+        states: [
+          {
+            name: '判定',
+            steps: [{ name: '快速判定', type: 'llm', task: '判断' }],
+            transitions: [
+              { to: '通过', condition: { verdict: 'success' }, priority: 10 },
+              { to: '拒绝', condition: { verdict: 'fail' }, priority: 20 },
+            ],
+            isInitial: true,
+            isFinal: false,
+          },
+          {
+            name: '通过',
+            steps: [{ name: '记录', type: 'script', script: 'return { output: "通过", success: true }' }],
+            transitions: [],
+            isInitial: false,
+            isFinal: true,
+          },
+          {
+            name: '拒绝',
+            steps: [{ name: '记录', type: 'script', script: 'return { output: "拒绝", success: true }' }],
+            transitions: [],
+            isInitial: false,
+            isFinal: true,
+          },
+        ],
+      },
+    }
+    const { result } = await run(config, {
+      '判定/快速判定': V('fail', '输入非法'),
+    })
+    expect(result.status).toBe('completed')
+    expect(result.stateOutcomes.map((o) => o.state)).toEqual(['判定', '拒绝'])
+  })
   it('runs parallel segments concurrently', async () => {
     const config: WorkflowConfig = {
       workflow: {
@@ -633,6 +759,9 @@ describe('runStateMachine', () => {
         await new Promise((resolve) => setTimeout(resolve, 20))
         active.splice(active.indexOf(input.stepName), 1)
         return { outputSummary: '', verdict: V('pass') }
+      },
+      async runLlmStep() {
+        throw new Error('该测试不应启动 LLM 步骤')
       },
       async runSubworkflowStep() {
         return { outcome: 'completed', verdict: V('pass') }

@@ -119,10 +119,11 @@ export const workflowStepSchema = z.object({
   agent: z.string().optional(),
   task: z.string().optional(),
   preCommands: z.array(z.string()).optional(),
-  type: z.enum(['agent', 'script', 'subworkflow']).optional(),
+  type: z.enum(['agent', 'script', 'subworkflow', 'llm']).optional(),
   workflow: z.string().optional(),
   subworkflow: subworkflowReferenceSchema.partial().optional(),
   script: z.string().optional(),
+  model: z.string().optional(),
   inputs: subworkflowInputsSchema.optional(),
   result: subworkflowResultMappingSchema.optional(),
   runtime: subworkflowRuntimeSchema.optional(),
@@ -149,6 +150,16 @@ export const workflowStepSchema = z.object({
         code: z.ZodIssueCode.custom,
         path: ['script'],
         message: '脚本步骤必须设置 script',
+      })
+    }
+    return
+  }
+  if (step.type === 'llm') {
+    if (!step.task?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['task'],
+        message: 'LLM 步骤必须设置 task',
       })
     }
     return

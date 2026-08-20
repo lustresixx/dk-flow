@@ -349,6 +349,33 @@ async function executeState(
           startedAt: now(),
           finishedAt: now(),
         }
+      } else if (step.type === 'llm') {
+        const stepContext = {
+          ...context,
+          priorStepEvidence: buildStepEvidence(completedSteps),
+        }
+        const result = await executor.runLlmStep({
+          stepName: step.name,
+          role,
+          task: step.task ?? '',
+          agentName: step.agent,
+          constraints: step.constraints ?? [],
+          model: step.model,
+          ctx: stepContext,
+          parent: options.parent,
+          signal: options.signal,
+        })
+        outcome = {
+          key,
+          state: machineState.name,
+          step: step.name,
+          agent: step.agent,
+          role,
+          outputSummary: result.outputSummary,
+          verdict: result.verdict,
+          startedAt: now(),
+          finishedAt: now(),
+        }
       } else if (step.type === 'subworkflow') {
         const configFile = step.workflow?.trim() || step.subworkflow?.configFile?.trim()
         if (!configFile) throw new EngineError(`子工作流步骤「${step.name}」缺少配置`, 'NO_MATCH')

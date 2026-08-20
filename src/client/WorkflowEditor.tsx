@@ -51,6 +51,7 @@ const STEP_TYPE_TEXT: Record<string, string> = {
   agent: 'AI',
   script: '脚本',
   subworkflow: '子流',
+  llm: '快速LLM',
 }
 
 /** Custom state node rendered on the canvas. */
@@ -77,7 +78,7 @@ function AceStateNode(props: NodeProps<StateNode>): JSX.Element {
       </div>
       <div className={styles.flowNodeKinds}>
         {[...kinds].slice(0, 4).map((kind) => (
-          <span key={kind} className={styles.kindBadge}>{kind}</span>
+          <span key={kind} className={styles.kindBadge}>{STEP_TYPE_TEXT[kind] ?? kind}</span>
         ))}
       </div>
       <Handle type="source" position={Position.Right} className={styles.handle} />
@@ -483,6 +484,7 @@ function StateInspector(props: {
               type: 'agent',
               workflowRef: '',
               script: '// context.requirements 为运行输入，context.priorStepEvidence 为前序产出\nreturn { output: "完成", success: true }',
+              model: '',
               parallelGroup: '',
             },
           ])
@@ -518,6 +520,7 @@ function StepEditor(props: {
         />
         <select value={draft.type} onChange={(event) => { set({ type: event.target.value as StepDraft['type'] }) }}>
           <option value="agent">AI 步骤</option>
+          <option value="llm">快速 LLM</option>
           <option value="script">脚本步骤</option>
           <option value="subworkflow">子工作流</option>
         </select>
@@ -541,6 +544,34 @@ function StepEditor(props: {
             placeholder="任务描述（交给该角色 Agent 的指令）"
             value={draft.task}
             onChange={(event) => { set({ task: event.target.value }) }}
+          />
+        </>
+      ) : draft.type === 'llm' ? (
+        <>
+          <select value={draft.agent} onChange={(event) => { set({ agent: event.target.value }) }}>
+            <option value="">无角色（直接调用，最快）</option>
+            {props.agentNames.map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+          <select value={draft.role} onChange={(event) => { set({ role: event.target.value as StepDraft['role'] }) }}>
+            {ROLES.map((role) => (
+              <option key={role} value={role}>
+                {role === '' ? '角色（可选）' : role}
+              </option>
+            ))}
+          </select>
+          <textarea
+            rows={2}
+            placeholder="单轮任务描述（一次 LLM 调用，不启动子代理、无工具）"
+            value={draft.task}
+            onChange={(event) => { set({ task: event.target.value }) }}
+          />
+          <input
+            type="text"
+            placeholder="model（可选，留空用调用方默认模型）"
+            value={draft.model}
+            onChange={(event) => { set({ model: event.target.value }) }}
           />
         </>
       ) : draft.type === 'script' ? (

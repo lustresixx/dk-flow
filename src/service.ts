@@ -9,7 +9,7 @@ import { readFile } from 'node:fs/promises'
 import { isAbsolute, resolve } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import { assertObjectJsonSchema, type ObjectJsonSchema, type ToolRestriction } from '@deepseek-ai/dsh-tools'
 import type { SubagentStartRequest } from '@deepseek-ai/dsh-subagent'
 import type { JobId, JobStart } from '@deepseek-ai/dsh-jobs'
@@ -921,6 +921,125 @@ export default class AceHarnessService extends Service {
           if (poller !== undefined) clearInterval(poller)
           stepSignal.dispose()
           run?.dispose()
+        }
+      },
+      async runLlmStep(input) {
+        const agentDef = input.agentName ? await service.agentByName(input.agentName) : undefined
+        const registeredProviders = service.ctx.llm.listProviders().map((info) => info.id)
+        const provider =
+          input.parent.options.provider ??
+          (registeredProviders.includes(service.config.subagentProvider)
+            ? service.config.subagentProvider
+            : registeredProviders[0])
+        if (!provider) {
+          throw new EngineError('没有已注册的 LLM provider，无法执行 llm 步骤', 'NO_MATCH')
+        }
+        const model =
+          input.model ?? (service.config.model || (input.parent.options.model ?? ''))
+        if (model === '') {
+          throw new EngineError(
+            `llm 步骤「${input.stepName}」未指定 model，且调用方与插件配置都没有默认模型`,
+            'NO_MATCH',
+          )
+        }
+        const promptText = buildStepPrompt({
+          role: input.role,
+          task: input.task,
+          constraints: input.constraints,
+          ctx: input.ctx,
+        })
+        const stepSignal = stepSignalWithTimeout(input.signal, service.config.stepTimeoutMs)
+        const stream = service.streams.get(parentRunId)
+        if (stream) {
+          stream.currentState = input.ctx.state
+          stream.currentStep = input.stepName
+          stream.agent = input.agentName ?? null
+          stream.role = input.role
+          stream.text = ''
+          stream.childSessionId = null
+          stream.foldIndex = 0
+          stream.stepLog.push({
+            key: `${input.ctx.state}/${input.stepName}`,
+            state: input.ctx.state,
+            step: input.stepName,
+            agent: input.agentName ?? null,
+            role: input.role,
+            text: '',
+            finished: false,
+          })
+          stream.stepLogIndex = stream.stepLog.length - 1
+          stream.seq += 1
+        }
+        service.ctx.emit('ace/step-start', {
+          runId: parentRunId,
+          state: input.ctx.state,
+          step: input.stepName,
+          role: input.role,
+        })
+        try {
+          const userMessage = createUserMessage({
+            content: [{ type: 'text', text: promptText }],
+            source: { kind: 'plugin', plugin: 'dsh-ace-harness' },
+          })
+          const collect = (async (): Promise<string> => {
+            let text = ''
+            for await (const chunk of service.ctx.llm.stream({
+              provider,
+              model,
+              messages: [userMessage],
+              system: agentDef?.systemPrompt,
+              temperature: agentDef?.temperature,
+              maxTokens: input.parent.options.maxTokens,
+              signal: stepSignal.signal,
+            })) {
+              if (chunk.type === 'text-delta') {
+                text += chunk.text
+                const entry = service.streams.get(parentRunId)
+                if (entry) {
+                  entry.text += chunk.text
+                  const logEntry = entry.stepLog[entry.stepLogIndex]
+                  if (logEntry) logEntry.text += chunk.text
+                  entry.seq += 1
+                }
+              } else if (chunk.type === 'finish' && chunk.reason.kind === 'error') {
+                throw new Error(
+                  `llm 步骤「${input.stepName}」调用失败: ${chunk.reason.failure.message}`,
+                )
+              }
+            }
+            return text
+          })()
+          const outputText = await raceAbort(collect, input.signal)
+          if (stepSignal.timedOut()) {
+            throw new Error(`步骤「${input.stepName}」执行超时（${service.config.stepTimeoutMs}ms）`)
+          }
+          const verdict = extractVerdict(outputText)
+          const finalText = truncate(outputText.trim() || '(该步骤没有文本输出)', SUMMARY_BUDGET)
+          if (stream) {
+            stream.text = finalText
+            const logEntry = stream.stepLog[stream.stepLogIndex]
+            if (logEntry) {
+              logEntry.text = finalText
+              logEntry.finished = true
+            }
+            stream.currentStep = null
+            stream.agent = null
+            stream.role = null
+            stream.childSessionId = null
+            stream.seq += 1
+          }
+          service.ctx.emit('ace/step-end', {
+            runId: parentRunId,
+            state: input.ctx.state,
+            step: input.stepName,
+            verdict: verdict?.verdict,
+          })
+          return {
+            outputSummary: finalText,
+            verdict,
+          }
+        } finally {
+          stepSignal.dispose()
         }
       },
       async runSubworkflowStep(input) {

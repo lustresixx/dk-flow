@@ -99,6 +99,15 @@ describe('workflow-model', () => {
     })
   })
 
+  it('round-trips llm steps through drafts', () => {
+    const step = { name: '快速判定', type: 'llm', model: 'fast-model', task: '判断' } as const
+    const draft = stepToDraft(step)
+    expect(draft).toMatchObject({ type: 'llm', model: 'fast-model', task: '判断' })
+    const restored = draftToStep(draft)
+    expect(restored).toMatchObject({ name: '快速判定', type: 'llm', model: 'fast-model', task: '判断' })
+    expect(restored.agent).toBeUndefined()
+  })
+
   it('creates new states placed after existing nodes and replaces steps in order', () => {
     const { nodes } = configToGraph(config)
     const state = newState(nodes, '新状态')

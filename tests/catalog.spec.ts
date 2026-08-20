@@ -30,7 +30,7 @@ describe('built-in catalog', () => {
     }
   })
 
-  it('ships the six built-in workflow templates, all reference-consistent', async () => {
+  it('ships the seven built-in workflow templates, all reference-consistent', async () => {
     const templates = await loadBuiltinTemplates()
     expect(templates.map((t) => t.id)).toEqual(
       expect.arrayContaining([
@@ -40,6 +40,7 @@ describe('built-in catalog', () => {
         'simple-script-pipeline',
         'code-optimization-review',
         'mixed-agent-script',
+        'simple-llm-qa',
       ]),
     )
     const agents = await loadBuiltinAgents()
@@ -91,6 +92,14 @@ describe('built-in catalog', () => {
       'script',
     ])
     expect(mixedSteps.map((s) => s.agent ?? null)).toEqual([null, 'architect', null, 'code-judge', null])
+    // The LLM template runs two bare llm nodes with no agents, then a script summary.
+    const qa = templates.find((t) => t.id === 'simple-llm-qa')!
+    const qaSteps = qa.config.workflow.states
+      .filter((s) => s.name === '快速判断' || s.name === '提炼要点')
+      .flatMap((s) => s.steps)
+    expect(qaSteps.map((s) => s.type)).toEqual(['llm', 'llm'])
+    expect(qaSteps.map((s) => s.agent ?? null)).toEqual([null, null])
+    expect(qa.config.workflow.states[0]!.steps[0]!.role).toBe('judge')
   })
 })
 

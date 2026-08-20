@@ -1,0 +1,22 @@
+apiVersion: aceharness.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  id: simple-llm-qa
+  version: 1.0.0
+  name: 快速 LLM 问答
+  description: 轻量 llm 节点示例：每个节点只是一次直接的单轮模型调用，不启动子代理、不带工具，适合快速判断、分类与要点提炼。
+  category: 示例
+  tags: [示例, LLM, 快速]
+  featured: false
+spec:
+  entrypoint: workflow.yaml
+  mode: state-machine
+  compatibility:
+    aceharness: ">=1.0.0-rc.8 <2.0.0"
+  parameters:
+    - { id: workflowName, label: 工作流名称, type: string, bind: /workflow/name, required: true, default: 快速 LLM 问答 }
+    - { id: requirements, label: 问题或文本, type: text, bind: /context/requirements, required: true }
+  dependencies:
+    agents: []
+    skills: []
+    subworkflows: []

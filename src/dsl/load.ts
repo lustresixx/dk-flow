@@ -126,6 +126,7 @@ export function validateWorkflowReferences(
     for (const step of state.steps) {
       if (step.type === 'subworkflow' || step.type === 'script') continue
       const agent = step.agent ?? ''
+      if (step.type === 'llm' && agent === '') continue
       if (!knownAgents.has(agent)) {
         errors.push(`状态「${state.name}」步骤「${step.name}」引用了未知 Agent「${agent}」`)
       }

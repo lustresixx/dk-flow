@@ -128,6 +128,25 @@ export interface StepExecutor {
     inheritedRequirements: string
   }): Promise<{ outcome: 'completed' | 'failed' | 'stopped' | 'crashed'; verdict?: StepVerdict }>
 
+  /**
+   * Run one bare LLM step: a direct single-turn chat completion on the parent
+   * model route, without spawning a subagent or exposing tools. Used for fast
+   * single-turn nodes (judgement, classification, drafting) where subagent
+   * startup cost is not worth paying.
+   */
+  runLlmStep(input: {
+    stepName: string
+    role: 'attacker' | 'defender' | 'judge' | 'neutral'
+    task: string
+    /** Optional agent whose system prompt becomes the role prompt. */
+    agentName?: string
+    constraints: string[]
+    model?: string
+    ctx: StepContext
+    parent: Agent
+    signal: AbortSignal
+  }): Promise<{ outputSummary: string; verdict?: StepVerdict }>
+
   /** Supervisor checkpoint advice between states (optional, may be absent). */
   supervisorAdvice?(input: {
     supervisorName: string

@@ -1,0 +1,80 @@
+workflow:
+  name: 快速 LLM 问答
+  description: 轻量 llm 节点串联示例：快速判断 → 要点提炼 → 脚本汇总，成功/失败二元流转
+  mode: state-machine
+  maxTransitions: 10
+  states:
+    - name: 快速判断
+      description: 一次单轮模型调用，判断输入是否值得继续处理
+      isInitial: true
+      isFinal: false
+      maxSelfTransitions: 2
+      position: { x: 80, y: 220 }
+      steps:
+        - name: 判断输入
+          type: llm
+          role: judge
+          task: |
+            判断「本次需求」中的用户输入是否是有意义、值得继续处理的内容
+            （明确的问题、待分析的文本或任务描述视为有意义；空白、无意义字符视为无意义）。
+            有意义则裁决 success，否则裁决 fail。
+      transitions:
+        - { to: 提炼要点, condition: { verdict: success }, priority: 10, label: 成功 }
+        - { to: 失败, condition: { verdict: fail }, priority: 20, label: 失败 }
+    - name: 提炼要点
+      description: 第二次单轮调用，提炼输入的核心要点
+      isInitial: false
+      isFinal: false
+      maxSelfTransitions: 2
+      position: { x: 380, y: 220 }
+      steps:
+        - name: 提炼要点
+          type: llm
+          task: |
+            提炼「本次需求」中用户输入的核心要点，输出 3-5 条结构化总结，
+            并在最后给出 step-conclusion 结论标签。
+      transitions:
+        - { to: 汇总, condition: { verdict: success }, priority: 10, label: 成功 }
+        - { to: 失败, condition: { verdict: fail }, priority: 20, label: 失败 }
+    - name: 汇总
+      description: 脚本节点汇总前面两个 LLM 节点的产出
+      isInitial: false
+      isFinal: true
+      position: { x: 680, y: 220 }
+      steps:
+        - name: 输出汇总
+          type: script
+          script: |
+            const summary = [
+              '=== 快速 LLM 问答汇总 ===',
+              '原始输入：' + (context.requirements || ''),
+              '',
+              context.priorStateEvidence || '',
+            ].join('\n')
+            return { output: summary, success: true }
+      transitions: []
+    - name: 失败
+      description: 失败终态：记录失败原因
+      isInitial: false
+      isFinal: true
+      position: { x: 380, y: 460 }
+      steps:
+        - name: 记录失败
+          type: script
+          script: |
+            return {
+              output: '处理失败。最近一步产出：\n' + (context.priorStepEvidence || '（无）'),
+              success: true,
+            }
+      transitions: []
+context:
+  projectRoot: ""
+  workspaceMode: in-place
+  requirements: ""
+  taskInput:
+    fields:
+      - id: requirements
+        label: 问题或文本
+        type: text
+        required: true
+        placeholder: "任何问题或文本；llm 节点将判断并提炼要点"

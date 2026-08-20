@@ -23,7 +23,7 @@ export type IssueType = 'design' | 'implementation' | 'test' | 'performance' | '
 
 export type IssueSeverity = 'critical' | 'major' | 'minor'
 
-export type StepType = 'agent' | 'script' | 'subworkflow'
+export type StepType = 'agent' | 'script' | 'subworkflow' | 'llm'
 
 /** Built-in agent catalog entry (ported subset of the ACE role config). */
 export interface AgentDefinition {
@@ -138,13 +138,13 @@ export interface SubworkflowReference {
   runtime?: SubworkflowRuntime
 }
 
-/** One step of a state: an agent task or a nested subworkflow. */
+/** One step of a state: an agent task, a bare llm call, a script, or a nested subworkflow. */
 export interface WorkflowStep {
   id?: string
   name: string
-  /** Agent catalog name; required unless `type: subworkflow`. */
+  /** Agent catalog name; optional for `script`, `llm` (role prompt), and `subworkflow`. */
   agent?: string
-  /** Task description handed to the agent. */
+  /** Task description handed to the agent or the bare llm call. */
   task?: string
   /** Shell commands run before the agent step; output is injected as context. */
   preCommands?: string[]
@@ -154,6 +154,8 @@ export interface WorkflowStep {
   subworkflow?: Partial<SubworkflowReference>
   /** JavaScript source for `type: script` steps (node:vm, returns JSON). */
   script?: string
+  /** Optional model override for `type: llm` (and agent) steps. */
+  model?: string
   inputs?: SubworkflowInputs
   result?: SubworkflowResultMapping
   runtime?: SubworkflowRuntime

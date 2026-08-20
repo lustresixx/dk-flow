@@ -76,6 +76,46 @@ workflow:
 `
     expect(() => parseWorkflowYaml(yaml)).toThrow(/子工作流步骤必须设置/)
   })
+
+  it('requires a task on llm steps', () => {
+    const yaml = `
+workflow:
+  name: x
+  mode: state-machine
+  states:
+    - name: s
+      isInitial: true
+      isFinal: true
+      steps:
+        - name: fast
+          type: llm
+          model: fast-model
+      transitions: []
+`
+    expect(() => parseWorkflowYaml(yaml)).toThrow(/LLM 步骤必须设置/)
+  })
+
+  it('accepts an llm step without an agent', () => {
+    const yaml = `
+workflow:
+  name: x
+  mode: state-machine
+  states:
+    - name: s
+      isInitial: true
+      isFinal: true
+      steps:
+        - name: fast
+          type: llm
+          model: fast-model
+          task: 判断输入是否合法
+      transitions: []
+`
+    const config = parseWorkflowYaml(yaml)
+    expect(config.workflow.states[0]!.steps[0]!.type).toBe('llm')
+    expect(config.workflow.states[0]!.steps[0]!.model).toBe('fast-model')
+    expect(validateWorkflowReferences(config, new Set())).toEqual([])
+  })
 })
 
 describe('validateWorkflowReferences', () => {

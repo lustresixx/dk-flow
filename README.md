@@ -49,16 +49,17 @@ dsh --profile web --dump-config
 
 ### 工作流工作台（后台页面）
 
-- **模板页**：4 个内置模板（结构预览 + 参数表单），可「直接运行」或「创建并编排」
+- **模板页**：7 个内置模板（结构预览 + 参数表单），可「直接运行」或「创建并编排」
 - **工作流页**：项目/个人实例列表，运行 / 编排 / 删除
 - **运行记录页**：状态时间线、每步输出与 verdict、supervisor 评分、恢复 / 停止
-- **编辑器**：拖动状态节点布局；从节点右缘拖线到另一节点创建转移（默认「成功」，可在右侧检查器改成「失败」或「无条件」）；点节点编辑状态属性与步骤（AI / 脚本 / 子工作流）；保存即校验
+- **编辑器**：拖动状态节点布局；从节点右缘拖线到另一节点创建转移（默认「成功」，可在右侧检查器改成「失败」或「无条件」）；点节点编辑状态属性与步骤（AI / 快速 LLM / 脚本 / 子工作流）；保存即校验
 
 ### 节点类型
 
 | 类型 | 说明 |
 |---|---|
-| AI 步骤 | 选择角色 Agent（defender/attacker/judge 或 11 个内置角色），填写任务；judge 步骤结构化输出 verdict |
+| AI 步骤 | 选择角色 Agent（defender/attacker/judge 或 13 个内置角色），启动 DSH 子代理执行任务，可按 Agent 配置挂载工具；judge 步骤结构化输出 verdict |
+| 快速 LLM | 一次直接的单轮模型调用（不启动子代理、不带工具），适合快速判断 / 分类 / 摘要；`agent` 可选（填写则复用其角色设定作为 system prompt），`model` 可选（缺省用调用方默认模型） |
 | 脚本步骤 | 内联 JavaScript（node:vm 沙箱、10s 超时）；可用 `context.requirements` / `context.inputs` / `context.priorStateEvidence` / `context.priorStepEvidence`；返回 `{ output, success }`、`{ error }` 或裸值 |
 | 子工作流 | 引用另一个工作流配置（文件名/模板 id），独立 runId，结果映射回 verdict |
 
