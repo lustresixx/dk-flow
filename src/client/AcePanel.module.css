@@ -40,6 +40,15 @@
   animation: breathe 2.2s ease-in-out infinite;
 }
 
+/* Static badge for a recently finished run: same spot, no breathing. */
+.doneDot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 35% 35%, #d8dae1, #8a8f9c 60%, #5f646f);
+  opacity: 0.9;
+}
+
 @keyframes breathe {
   0%, 100% {
     opacity: 1;

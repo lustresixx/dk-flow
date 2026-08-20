@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react'
 import { LiveRunPanel } from './LiveRunPanel.tsx'
 import { Workbench } from './Workbench.tsx'
+import { selectRun, type RunSelection, type SelectableRun } from './run-selection.ts'
 import styles from './AcePanel.module.css'
 
 const LOGO = '/plugins/dsh-ace-harness/assets/ace-logo.png'
@@ -21,16 +22,13 @@ export interface AcePanelProps {
   send: (text: string) => Promise<boolean>
 }
 
-interface RunRow {
-  runId: string
-  status: string
-  startedAt: string
+interface RunRow extends SelectableRun {
   finishedAt: string | null
 }
 
 export function AcePanel(props: AcePanelProps): JSX.Element {
   const [open, setOpen] = useState(false)
-  const [runId, setRunId] = useState<string | null>(null)
+  const [selected, setSelected] = useState<RunSelection>({ runId: null, active: false })
   void props.currentSessionId
 
   // Discover interesting runs: active ones plus recently finished ones. The
@@ -53,18 +51,13 @@ export function AcePanel(props: AcePanelProps): JSX.Element {
           })
           .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
         if (!alive) return
-        setRunId((current) => {
+        setSelected((current) => {
           const remembered = window.sessionStorage.getItem(LAST_RUN_KEY)
-          const next = (() => {
-            if (current !== null && runs.some((run) => run.runId === current)) return current
-            if (remembered !== null && runs.some((run) => run.runId === remembered)) return remembered
-            const active = runs.find((run) => ACTIVE_STATUSES.has(run.status))
-            return active?.runId ?? (runs[0]?.runId ?? null)
-          })()
-          if (next !== null && next !== current) {
-            window.sessionStorage.setItem(LAST_RUN_KEY, next)
+          const next = selectRun(current, remembered, runs)
+          if (next.runId !== null && next.runId !== current.runId) {
+            window.sessionStorage.setItem(LAST_RUN_KEY, next.runId)
           }
-          if (next === null) {
+          if (next.runId === null) {
             window.sessionStorage.removeItem(LAST_RUN_KEY)
           }
           return next
@@ -83,14 +76,18 @@ export function AcePanel(props: AcePanelProps): JSX.Element {
 
   return (
     <>
-      <LiveRunPanel runId={runId} />
+      <LiveRunPanel runId={selected.runId} />
       {open ? (
         <Workbench send={props.send} onClose={() => { setOpen(false) }} />
       ) : (
         <button type="button" className={styles.launcher} onClick={() => { setOpen(true) }}>
           <img src={LOGO} alt="" className={styles.launcherLogo} />
           <span>工作流</span>
-          {runId !== null ? <span className={styles.liveDot} title="有工作流运行" /> : null}
+          {selected.runId !== null && selected.active ? (
+            <span className={styles.liveDot} title="有工作流正在运行" />
+          ) : selected.runId !== null ? (
+            <span className={styles.doneDot} title="最近一次运行已结束" />
+          ) : null}
         </button>
       )}
     </>
