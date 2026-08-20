@@ -9,6 +9,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Background,
   BackgroundVariant,
+  Controls,
   Handle,
   Position,
   ReactFlow,
@@ -188,8 +189,9 @@ export function LiveRunPanel(props: LiveRunPanelProps): JSX.Element | null {
               </div>
             </div>
             <div className={styles.diagram}>
-              <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} fitView nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} zoomOnScroll={false} panOnDrag={false}>
+              <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} fitView nodesDraggable={false} nodesConnectable={false} elementsSelectable={false}>
                 <Background variant={BackgroundVariant.Dots} gap={18} size={1.2} />
+                <Controls showInteractive={false} />
               </ReactFlow>
             </div>
           </div>
