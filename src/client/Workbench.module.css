@@ -119,6 +119,26 @@
   background: rgba(255, 255, 255, 0.04);
 }
 
+.createBlank {
+  padding: 10px 12px;
+  border: 1px dashed rgba(255, 255, 255, 0.22);
+  border-radius: 12px;
+  background: transparent;
+  color: #9a9ab0;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  transition: border-color 120ms ease, color 120ms ease, background-color 120ms ease;
+}
+
+.createBlank:hover {
+  border-color: #4f5bd5;
+  background: rgba(79, 91, 213, 0.08);
+  color: #e6e6ee;
+}
+
 .itemActive {
   border-color: #4f5bd5;
   background: rgba(79, 91, 213, 0.12);

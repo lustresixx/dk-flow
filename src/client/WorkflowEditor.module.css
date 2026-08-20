@@ -249,6 +249,24 @@
   font-size: 13px;
 }
 
+.stateTest {
+  width: 100%;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--dsw-accent, #4f5bd5) 55%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--dsw-accent, #4f5bd5) 14%, transparent);
+  color: var(--dsw-accent, #7c8cf8);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  transition: background-color 120ms ease;
+}
+
+.stateTest:hover {
+  background: color-mix(in srgb, var(--dsw-accent, #4f5bd5) 26%, transparent);
+}
+
 .deleteButton {
   border: 1px solid #7a3030;
   background: transparent;
@@ -299,10 +317,110 @@
 }
 
 .handle {
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 12px;
   background: var(--dsw-accent, #4f5bd5);
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+  cursor: crosshair;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.handle:hover {
+  transform: scale(1.35);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--dsw-accent, #4f5bd5) 30%, transparent);
+}
+
+/* Outgoing-transition section in the state inspector */
+.hintText {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #9a9ab0;
+}
+
+.transitionList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.transitionItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+}
+
+.transitionItem:hover {
+  border-color: var(--dsw-accent, #4f5bd5);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.transitionVerdict {
+  flex: none;
+  padding: 1px 8px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.transitionArrow {
+  flex: none;
+  color: #9a9ab0;
+}
+
+.transitionTarget {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transitionAdd {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.transitionAdd select {
+  min-width: 0;
+  flex: 1;
+  padding: 5px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: #2a2d3a;
+  color: inherit;
+  font-size: 12px;
+}
+
+.transitionAdd button {
+  flex: none;
+  padding: 5px 12px;
   border: none;
+  border-radius: 8px;
+  background: var(--dsw-accent, #4f5bd5);
+  color: #ffffff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.transitionAdd button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .pane {

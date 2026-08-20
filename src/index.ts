@@ -566,6 +566,79 @@ export function apply(ctx: Context, config: Config): void {
       },
     }), 'ace-harness: test-step route')
 
+    // State-level verification: run every step of one state and predict the
+    // transition its joined verdict would fire (editor "验证状态" button).
+    ctx.effect(() => webServer.register({
+      kind: 'exact',
+      path: '/plugins/dsh-ace-harness/test-state',
+      handler: async (req, res) => {
+        try {
+          if (req.method !== 'POST') {
+            res.writeHead(405, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end('method not allowed')
+            return
+          }
+          const body = JSON.parse(await readRequestBody(req, 1_000_000)) as {
+            workspace?: string
+            workflow?: string
+            yaml?: string
+            state?: string
+            values?: Record<string, string>
+          }
+          if (!body.state) {
+            res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+            res.end('缺少 state')
+            return
+          }
+          const workspacePath = body.workspace ?? workspaceRegistry.list()[0]?.path ?? ''
+          let config: WorkflowConfig
+          if (body.yaml) {
+            config = parseWorkflowYaml(body.yaml)
+          } else {
+            if (!body.workflow) {
+              res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+              res.end('缺少 workflow 或 yaml')
+              return
+            }
+            const resolved = await aceHarness.resolveWorkflowConfig(workspacePath, body.workflow)
+            if (!resolved) {
+              res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+              res.end(`未找到 workflow「${body.workflow}」`)
+              return
+            }
+            config = resolved.config
+          }
+          const result = await aceHarness.testState({
+            signal: new AbortController().signal,
+            config,
+            stateName: body.state,
+            values: body.values ?? {},
+            workspace: workspacePath,
+          })
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+          res.end(
+            JSON.stringify({
+              state: result.state,
+              verdict: result.verdict,
+              steps: result.steps.map((step) => ({
+                step: step.step,
+                type: step.type,
+                verdict: step.verdict?.verdict ?? null,
+                rationale: step.verdict?.rationale ?? null,
+                outputSummary: step.outputSummary,
+              })),
+              matchedTransition: result.matchedTransition,
+              error: result.error,
+              notes: result.notes,
+            }),
+          )
+        } catch (error) {
+          res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+          res.end(String((error as Error).message))
+        }
+      },
+    }), 'ace-harness: test-state route')
+
     // Live streaming projection of one run, polled by the web panel.
     ctx.effect(() => webServer.register({
       kind: 'exact',

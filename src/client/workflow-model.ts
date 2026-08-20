@@ -36,12 +36,57 @@ const AUTO_COLUMNS = 5
 const AUTO_SPACING_X = 260
 const AUTO_SPACING_Y = 180
 
-/** Verdict edge colors on the canvas. */
-const EDGE_COLORS: Record<string, string> = {
-  success: '#34d399',
-  pass: '#34d399',
-  fail: '#f87171',
-  conditional_pass: '#fbbf24',
+/** Verdict presentation shared by the editor canvas, inspectors, and hints. */
+const VERDICT_META: Record<string, { label: string; color: string }> = {
+  success: { label: '成功', color: 'var(--dsw-alias-state-success-primary, #12a150)' },
+  pass: { label: '成功', color: 'var(--dsw-alias-state-success-primary, #12a150)' },
+  fail: { label: '失败', color: 'var(--dsw-alias-state-error-primary, #e5484d)' },
+  conditional_pass: { label: '条件通过', color: 'var(--dsw-alias-state-warn-primary, #e08700)' },
+  '': { label: '无条件', color: 'var(--dsw-alias-label-tertiary, #6b7280)' },
+}
+
+const FALLBACK_VERDICT_META = VERDICT_META[''] as { label: string; color: string }
+
+/** Selectable verdict conditions (editor dropdowns; '' means unconditional). */
+export const VERDICT_OPTIONS = ['success', 'fail', 'conditional_pass'] as const
+
+/** Label + theme-token color for one verdict ('' / unknown → unconditional). */
+export function verdictMeta(verdict: string | undefined): { label: string; color: string } {
+  return VERDICT_META[verdict ?? ''] ?? FALLBACK_VERDICT_META
+}
+
+/** React Flow presentation props for a verdict-colored transition edge. */
+export function edgePresentation(
+  verdict: string | undefined,
+): Pick<TransitionEdge, 'style' | 'labelStyle' | 'labelBgStyle' | 'labelBgPadding' | 'labelBgBorderRadius'> {
+  const meta = verdictMeta(verdict)
+  return {
+    style: { stroke: meta.color, strokeWidth: 2 },
+    labelStyle: { fill: '#ffffff', fontSize: 11, fontWeight: 600 },
+    labelBgStyle: { fill: meta.color, fillOpacity: 0.9 },
+    labelBgPadding: [6, 3] as [number, number],
+    labelBgBorderRadius: 6,
+  }
+}
+
+/** Minimal valid workflow document behind the "create from blank" entry. */
+export function blankWorkflowYaml(name: string): string {
+  return [
+    'workflow:',
+    `  name: ${name}`,
+    "  description: ''",
+    '  mode: state-machine',
+    '  maxTransitions: 20',
+    '  states:',
+    '    - name: 开始',
+    "      description: ''",
+    '      isInitial: true',
+    '      isFinal: false',
+    '      position: { x: 80, y: 160 }',
+    '      steps: []',
+    '      transitions: []',
+    '',
+  ].join('\n')
 }
 
 /** Convert a config into React Flow nodes and edges (states + transitions). */
@@ -59,17 +104,12 @@ export function configToGraph(config: WorkflowConfig): { nodes: StateNode[]; edg
   for (const state of config.workflow.states) {
     for (const transition of state.transitions) {
       const verdict = transition.condition.verdict ?? ''
-      const color = EDGE_COLORS[verdict] ?? '#6b7280'
       edges.push({
         id: `e-${state.name}-${transition.to}-${edges.length}`,
         source: state.name,
         target: transition.to,
-        label: transition.label ?? verdict ?? '',
-        style: { stroke: color, strokeWidth: 2 },
-        labelStyle: { fill: '#f3f4f6', fontSize: 11, fontWeight: 600 },
-        labelBgStyle: { fill: color, fillOpacity: 0.9 },
-        labelBgPadding: [6, 3] as [number, number],
-        labelBgBorderRadius: 6,
+        label: transition.label ?? (verdict === '' ? '' : verdictMeta(verdict).label),
+        ...edgePresentation(verdict),
         data: { transition },
       })
     }

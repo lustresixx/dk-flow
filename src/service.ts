@@ -31,13 +31,14 @@ import {
   type BuiltinWorkflowTemplate,
 } from './catalog/index.js'
 import { parseWorkflowYaml, summarizeWorkflow, validateWorkflowReferences, type WorkflowSummary } from './dsl/load.js'
-import type { AgentDefinition, StepType, StepVerdict, WorkflowConfig } from './dsl/types.js'
+import type { AgentDefinition, StateMachineState, StepType, StepVerdict, WorkflowConfig, WorkflowStep } from './dsl/types.js'
 import { extractVerdict, normalizeVerdict } from './dsl/verdict.js'
-import { buildStepPrompt, buildSupervisorPrompt, SUMMARY_BUDGET, truncate } from './engine/prompts.js'
+import { buildStepEvidence, buildStepPrompt, buildSupervisorPrompt, SUMMARY_BUDGET, truncate } from './engine/prompts.js'
+import { evaluateTransitions, joinSegment, segmentSteps } from './engine/transitions.js'
 import { runPreCommands } from './engine/pre-commands.js'
 import { foldAssistantText, type StreamEventLike } from './engine/stream-fold.js'
 import { createRunState, runStateMachine } from './engine/runner.js'
-import { EngineError, type EngineRunOptions, type RunResult, type RunState, type StepContext, type StepExecutor } from './engine/types.js'
+import { EngineError, type EngineRunOptions, type RunResult, type RunState, type StepContext, type StepExecutor, type StepOutcome } from './engine/types.js'
 import { runScriptFile } from './engine/script-file-runner.js'
 import { runScriptNode } from './engine/script-runner.js'
 import { captureGitSnapshot, saveGitSnapshot } from './store/git-baseline.js'
@@ -279,6 +280,24 @@ export interface TestStepResult {
   data: unknown
 }
 
+/** One step line inside a state-level verification. */
+export interface TestStateStepDto {
+  step: string
+  type: StepType
+  verdict: StepVerdict | null
+  outputSummary: string
+}
+
+/** Result of verifying a whole state: step lines + predicted transition. */
+export interface TestStateResult {
+  state: string
+  verdict: StepVerdict | null
+  steps: TestStateStepDto[]
+  matchedTransition: { to: string; label: string | null } | null
+  error: string | null
+  notes: string[]
+}
+
 export default class AceHarnessService extends Service {
   private readonly config: Required<AceHarnessConfig>
   private agents: AgentDefinition[] = []
@@ -371,41 +390,189 @@ export default class AceHarnessService extends Service {
     if (!machineState) throw new Error(`未找到状态「${input.stateName}」`)
     const step = machineState.steps.find((candidate) => candidate.name === input.stepName)
     if (!step) throw new Error(`未找到状态「${input.stateName}」中的步骤「${input.stepName}」`)
+    const requirements = input.values.requirements ?? input.config.context?.requirements ?? ''
+    const sandboxDir = join(input.workspace, this.config.runDirName, 'test-sandbox')
+    if ((step.type ?? 'agent') === 'script') this.ensureTestSandbox(sandboxDir)
+    const executor = this.makeExecutor(input.workspace, (input.parent ?? { options: {} }) as Agent, `test-${Date.now()}`, 1)
+    return this.executeTestStep({
+      machineState,
+      step,
+      executor,
+      parent: input.parent,
+      signal: input.signal,
+      timeoutMs: step.timeoutMinutes !== undefined ? step.timeoutMinutes * 60_000 : undefined,
+      sandboxDir,
+      workspace: input.workspace,
+      stepContext: {
+        state: machineState.name,
+        stateDescription: machineState.description ?? '',
+        requirements,
+        projectRoot: input.config.context?.projectRoot,
+        priorStateEvidence: '',
+        priorStepEvidence: '（无本状态前置步骤产出）',
+        stepData: {},
+      },
+      scriptInput: {
+        requirements,
+        state: machineState.name,
+        priorStepEvidence: '',
+        priorStateEvidence: '',
+        inputs: input.values,
+        stepData: {},
+      },
+    })
+  }
+
+  /**
+   * Verify a whole state in isolation: run its steps in declared order with
+   * the same evidence hand-off as the engine, join the last segment's verdict
+   * under the state join policy, and predict which transition would fire.
+   */
+  async testState(input: {
+    parent?: Agent
+    signal: AbortSignal
+    config: WorkflowConfig
+    stateName: string
+    values: Record<string, string>
+    workspace: string
+  }): Promise<TestStateResult> {
+    const machineState = input.config.workflow.states.find((state) => state.name === input.stateName)
+    if (!machineState) throw new Error(`未找到状态「${input.stateName}」`)
+    const notes: string[] = []
+    const result: TestStateResult = {
+      state: machineState.name,
+      verdict: null,
+      steps: [],
+      matchedTransition: null,
+      error: null,
+      notes,
+    }
+    if (machineState.steps.length === 0) {
+      result.error = '该状态没有声明任何步骤，无法验证'
+      return result
+    }
+    if (machineState.reviewPolicy?.mode === 'adversarial') {
+      notes.push('对抗评审（reviewPolicy: adversarial）在独立验证中不展开，按声明的步骤原样执行')
+    }
+    if (machineState.steps.some((step) => step.parallelGroup)) {
+      notes.push('并行组在独立验证中按声明顺序串行执行（真实运行为并发）')
+    }
+    const requirements = input.values.requirements ?? input.config.context?.requirements ?? ''
+    const sandboxDir = join(input.workspace, this.config.runDirName, 'test-sandbox')
+    if (machineState.steps.some((step) => (step.type ?? 'agent') === 'script')) this.ensureTestSandbox(sandboxDir)
+    const executor = this.makeExecutor(input.workspace, (input.parent ?? { options: {} }) as Agent, `test-${Date.now()}`, 1)
+    const completed: StepOutcome[] = []
+    const collectData = (): Record<string, unknown> => {
+      const collected: Record<string, unknown> = {}
+      for (const outcome of completed) {
+        if (outcome.data !== undefined) collected[`${outcome.state}/${outcome.step}`] = outcome.data
+      }
+      return collected
+    }
+    for (const step of machineState.steps) {
+      const type: StepType = step.type ?? 'agent'
+      try {
+        const outcome = await this.executeTestStep({
+          machineState,
+          step,
+          executor,
+          parent: input.parent,
+          signal: input.signal,
+          timeoutMs: step.timeoutMinutes !== undefined ? step.timeoutMinutes * 60_000 : undefined,
+          sandboxDir,
+          workspace: input.workspace,
+          stepContext: {
+            state: machineState.name,
+            stateDescription: machineState.description ?? '',
+            requirements,
+            projectRoot: input.config.context?.projectRoot,
+            priorStateEvidence: '',
+            priorStepEvidence: buildStepEvidence(completed),
+            stepData: collectData(),
+          },
+          scriptInput: {
+            requirements,
+            state: machineState.name,
+            priorStepEvidence: buildStepEvidence(completed),
+            priorStateEvidence: '',
+            inputs: input.values,
+            stepData: collectData(),
+          },
+        })
+        const now = new Date().toISOString()
+        completed.push({
+          key: `${machineState.name}/${step.name}`,
+          state: machineState.name,
+          step: step.name,
+          type,
+          role: type === 'script' ? 'neutral' : (step.role ?? 'neutral'),
+          outputSummary: outcome.outputSummary,
+          ...(outcome.verdict ? { verdict: outcome.verdict } : {}),
+          ...(outcome.data !== undefined ? { data: outcome.data } : {}),
+          startedAt: now,
+          finishedAt: now,
+        })
+        result.steps.push({ step: step.name, type, verdict: outcome.verdict, outputSummary: outcome.outputSummary })
+      } catch (error) {
+        const message = (error as Error).message
+        result.steps.push({ step: step.name, type, verdict: null, outputSummary: `执行出错：${message}` })
+        result.error = `步骤「${step.name}」执行出错，后续步骤未执行：${message}`
+        return result
+      }
+    }
+    // Mirror executeState: the last segment's verdict, joined by state policy.
+    const segments = segmentSteps(machineState.steps)
+    const lastSegment = segments[segments.length - 1]!
+    const lastOutcomes = completed.filter((step) => lastSegment.steps.includes(step.step))
+    const pass: StepVerdict = { verdict: 'pass', issues: [], rationale: '' }
+    const joined = joinSegment(lastOutcomes.map((step) => step.verdict ?? pass), machineState.joinPolicy ?? { mode: 'all' }) ?? pass
+    result.verdict = joined
+    if (machineState.isFinal) {
+      notes.push('终止状态不发生转移')
+    } else {
+      const matched = evaluateTransitions(machineState, joined)
+      result.matchedTransition = matched ? { to: matched.to, label: matched.label ?? null } : null
+      if (!matched) notes.push('没有匹配的转移：真实运行会在此暂停并等待人工决策')
+    }
+    return result
+  }
+
+  /** Execute one step for an isolated test (shared by testStep/testState). */
+  private async executeTestStep(input: {
+    machineState: StateMachineState
+    step: WorkflowStep
+    executor: StepExecutor
+    parent: Agent | undefined
+    signal: AbortSignal
+    timeoutMs: number | undefined
+    sandboxDir: string
+    workspace: string
+    stepContext: StepContext
+    scriptInput: {
+      requirements: string
+      state: string
+      priorStepEvidence: string
+      priorStateEvidence: string
+      inputs: Record<string, string>
+      stepData: Record<string, unknown>
+    }
+  }): Promise<TestStepResult> {
+    const { machineState, step } = input
     const type: StepType = step.type ?? 'agent'
     const role = step.role ?? 'neutral'
-    const requirements = input.values.requirements ?? input.config.context?.requirements ?? ''
-    const stepContext: StepContext = {
-      state: machineState.name,
-      stateDescription: machineState.description ?? '',
-      requirements,
-      projectRoot: input.config.context?.projectRoot,
-      priorStateEvidence: '',
-      priorStepEvidence: '（无本状态前置步骤产出）',
-      stepData: {},
-    }
-    const scriptInput = {
-      requirements,
-      state: machineState.name,
-      priorStepEvidence: '',
-      priorStateEvidence: '',
-      inputs: input.values,
-      stepData: {},
-    }
-    const timeoutMs = step.timeoutMinutes !== undefined ? step.timeoutMinutes * 60_000 : undefined
-    const sandboxDir = join(input.workspace, this.config.runDirName, 'test-sandbox')
     if (type === 'script') {
-      this.ensureTestSandbox(sandboxDir)
+      this.ensureTestSandbox(input.sandboxDir)
       const result =
         step.scriptFile?.trim() !== undefined && step.scriptFile.trim() !== ''
-          ? await runScriptFile(step.scriptFile.trim(), scriptInput, {
-              projectRoot: input.config.context?.projectRoot,
+          ? await runScriptFile(step.scriptFile.trim(), input.scriptInput, {
+              projectRoot: input.stepContext.projectRoot,
               scriptsHome: join(input.workspace, this.config.runDirName, 'scripts'),
               pythonCommand: this.config.pythonCommand,
-              timeoutMs,
-              sandboxDir,
+              timeoutMs: input.timeoutMs,
+              sandboxDir: input.sandboxDir,
               signal: input.signal,
             })
-          : await runScriptNode(step.script ?? '', scriptInput, { timeoutMs, signal: input.signal })
+          : await runScriptNode(step.script ?? '', input.scriptInput, { timeoutMs: input.timeoutMs, signal: input.signal })
       return {
         state: machineState.name,
         step: step.name,
@@ -420,18 +587,17 @@ export default class AceHarnessService extends Service {
     if (type === 'llm') {
       // The bare llm call only reads `parent.options` for routing defaults.
       const parent = (input.parent ?? { options: {} }) as Agent
-      const executor = this.makeExecutor(input.workspace, parent, `test-${Date.now()}`, 1)
-      const result = await executor.runLlmStep({
+      const result = await input.executor.runLlmStep({
         stepName: step.name,
         role,
         task: step.task ?? '',
         agentName: step.agent,
         constraints: step.constraints ?? [],
         model: step.model,
-        ctx: stepContext,
+        ctx: input.stepContext,
         parent,
         signal: input.signal,
-        timeoutMs,
+        timeoutMs: input.timeoutMs,
       })
       return {
         state: machineState.name,
@@ -444,12 +610,11 @@ export default class AceHarnessService extends Service {
     }
     if (!input.parent) {
       throw new Error(
-        `「${type}」步骤的独立验证需要会话上下文：请在会话中用 /workflow test <工作流> ${input.stateName} ${input.stepName} 验证`,
+        `「${type}」步骤的独立验证需要会话上下文：请在会话中用 /workflow test <工作流> ${machineState.name} ${step.name} 验证`,
       )
     }
-    const executor = this.makeExecutor(input.workspace, input.parent, `test-${Date.now()}`, 1)
     if (type === 'agent') {
-      const result = await executor.runAgentStep({
+      const result = await input.executor.runAgentStep({
         stepName: step.name,
         agentName: step.agent ?? '',
         agentSystemPrompt: '',
@@ -457,10 +622,10 @@ export default class AceHarnessService extends Service {
         task: step.task ?? '',
         constraints: step.constraints ?? [],
         preCommands: step.preCommands ?? [],
-        ctx: stepContext,
+        ctx: input.stepContext,
         parent: input.parent,
         signal: input.signal,
-        timeoutMs,
+        timeoutMs: input.timeoutMs,
       })
       return {
         state: machineState.name,
@@ -472,12 +637,12 @@ export default class AceHarnessService extends Service {
       }
     }
     const configFile = step.workflow?.trim() || step.subworkflow?.configFile?.trim() || ''
-    const child = await executor.runSubworkflowStep({
+    const child = await input.executor.runSubworkflowStep({
       stepName: step.name,
       configFile,
       parent: input.parent,
       signal: input.signal,
-      inheritedRequirements: requirements,
+      inheritedRequirements: input.stepContext.requirements,
     })
     return {
       state: machineState.name,

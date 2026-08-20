@@ -16,6 +16,7 @@ import {
   type NodeProps,
 } from '@xyflow/react'
 import { EditorPane } from './WorkflowEditor.tsx'
+import { blankWorkflowYaml } from './workflow-model.ts'
 import type { AceStateDto, StateRunDto, StateTemplateDto, StateWorkflowDto } from './types.ts'
 import styles from './Workbench.module.css'
 
@@ -51,10 +52,10 @@ const STEP_TEXT: Record<string, string> = {
 const ACTIVE_RUN_STATUSES = new Set(['preparing', 'running', 'waiting-human'])
 
 const EDGE_COLORS: Record<string, string> = {
-  success: '#34d399',
-  pass: '#34d399',
-  fail: '#f87171',
-  conditional_pass: '#fbbf24',
+  success: 'var(--dsw-alias-state-success-primary, #12a150)',
+  pass: 'var(--dsw-alias-state-success-primary, #12a150)',
+  fail: 'var(--dsw-alias-state-error-primary, #e5484d)',
+  conditional_pass: 'var(--dsw-alias-state-warn-primary, #e08700)',
 }
 
 interface EditorState {
@@ -146,6 +147,22 @@ export function Workbench(props: WorkbenchProps): JSX.Element {
     [],
   )
 
+  /** Create-from-blank entry: a minimal one-state workflow in the editor. */
+  const createBlank = useCallback(
+    (workspacePath: string): void => {
+      if (workspacePath === '') {
+        setNotice('暂无已知工作区，无法创建工作流')
+        return
+      }
+      setEditor({
+        yaml: blankWorkflowYaml('未命名工作流'),
+        workspacePath,
+        fileName: `workflow-${Date.now()}.yaml`,
+      })
+    },
+    [],
+  )
+
   const agents = state?.agents.map((agent) => agent.name) ?? []
   const workspaces = state?.workspaces ?? []
   const runs = workspaces.flatMap((workspace) => workspace.runs.map((r) => ({ ...r, workspaceTitle: workspace.title, workspacePath: workspace.path })))
@@ -217,17 +234,26 @@ export function Workbench(props: WorkbenchProps): JSX.Element {
                 </button>
               ))
             ) : tab === 'workflows' ? (
-              workflows.map((item) => (
+              <>
                 <button
-                  key={`${item.workspacePath}/${item.entry.fileName}`}
                   type="button"
-                  className={workflow?.entry.fileName === item.entry.fileName ? styles.itemActive : styles.item}
-                  onClick={() => { setWorkflow(item) }}
+                  className={styles.createBlank}
+                  onClick={() => { createBlank(workspaces[0]?.path ?? '') }}
                 >
-                  <span className={styles.itemName}>{item.entry.name}</span>
-                  <span className={styles.itemMeta}>{item.entry.fileName} · {item.entry.stateCount} 状态</span>
+                  ＋ 新建空白工作流
                 </button>
-              ))
+                {workflows.map((item) => (
+                  <button
+                    key={`${item.workspacePath}/${item.entry.fileName}`}
+                    type="button"
+                    className={workflow?.entry.fileName === item.entry.fileName ? styles.itemActive : styles.item}
+                    onClick={() => { setWorkflow(item) }}
+                  >
+                    <span className={styles.itemName}>{item.entry.name}</span>
+                    <span className={styles.itemMeta}>{item.entry.fileName} · {item.entry.stateCount} 状态</span>
+                  </button>
+                ))}
+              </>
             ) : (
               runs.map((item) => (
                 <button
@@ -244,7 +270,7 @@ export function Workbench(props: WorkbenchProps): JSX.Element {
               ))
             )}
             {tab === 'templates' && state && state.templates.length === 0 ? <p className={styles.empty}>没有内置模板</p> : null}
-            {tab === 'workflows' && workflows.length === 0 ? <p className={styles.empty}>暂无 workflow 实例，可从模板创建</p> : null}
+            {tab === 'workflows' && workflows.length === 0 ? <p className={styles.empty}>暂无 workflow 实例——点上方「新建空白工作流」从零编排，或到「模板」页从模板创建</p> : null}
             {tab === 'runs' && runs.length === 0 ? <p className={styles.empty}>暂无运行记录</p> : null}
           </aside>
           <main className={styles.main}>

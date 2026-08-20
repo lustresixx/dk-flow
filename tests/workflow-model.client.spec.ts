@@ -1,13 +1,16 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
 import {
+  blankWorkflowYaml,
   configToGraph,
   configToYaml,
   draftToStep,
+  edgePresentation,
   graphToConfig,
   newState,
   replaceSteps,
   stepToDraft,
+  verdictMeta,
   yamlToConfig,
 } from '../src/client/workflow-model.ts'
 import type { WorkflowConfig } from '../src/dsl/types.ts'
@@ -138,5 +141,30 @@ describe('workflow-model', () => {
       stepToDraft({ name: 'b', agent: 'developer', task: 'B' }),
     ])
     expect(withSteps.steps.map((step) => step.name)).toEqual(['a', 'b'])
+  })
+
+  it('blank workflow yaml parses through the host DSL and survives the graph round trip', () => {
+    const blank = yamlToConfig(blankWorkflowYaml('未命名工作流'))
+    expect(blank.workflow.name).toBe('未命名工作流')
+    expect(blank.workflow.states).toHaveLength(1)
+    expect(blank.workflow.states[0]).toMatchObject({ name: '开始', isInitial: true, isFinal: false, steps: [], transitions: [] })
+    const { nodes, edges } = configToGraph(blank)
+    const restored = graphToConfig(nodes, edges, blank)
+    expect(restored.workflow.states).toHaveLength(1)
+    expect(configToYaml(restored)).toContain('未命名工作流')
+  })
+
+  it('verdict meta labels every editor verdict and falls back for unknown ones', () => {
+    expect(verdictMeta('success').label).toBe('成功')
+    expect(verdictMeta('fail').label).toBe('失败')
+    expect(verdictMeta('conditional_pass').label).toBe('条件通过')
+    expect(verdictMeta('').label).toBe('无条件')
+    expect(verdictMeta('mystery').label).toBe('无条件')
+    expect(verdictMeta(undefined).label).toBe('无条件')
+    for (const verdict of ['success', 'fail', 'conditional_pass', '']) {
+      const presentation = edgePresentation(verdict)
+      expect(presentation.style?.stroke).toContain('var(')
+      expect(presentation.labelBgStyle?.fill).toContain('var(')
+    }
   })
 })
