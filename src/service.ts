@@ -107,6 +107,9 @@ export interface WorkflowScriptEntry {
   description: string
 }
 
+/** TTL of the archived-count badge cache (P1-2⑥; badge may lag this long). */
+const ARCHIVED_COUNT_TTL_MS = 10_000
+
 /** Result of verifying one workflow step in isolation. */
 export interface TestStepResult {
   state: string
@@ -141,6 +144,8 @@ export default class AceHarnessService extends Service {
   private templates: BuiltinWorkflowTemplate[] = []
   private readonly catalogReady: Promise<void>
   private readonly archive = new SqliteArchive()
+  /** TTL cache for the state route's archived-count badge (P1-2⑥). */
+  private readonly archivedCountCache = new Map<string, { at: number; value: number }>()
   /** Shared per-run maps (active controllers / streams / audit cursors). */
   private readonly registry = new RunRegistry()
   /** The per-run persist pipeline. */
@@ -626,17 +631,29 @@ export default class AceHarnessService extends Service {
     return (await readWorkspaceSettings(workspace, this.config.runDirName)).sqliteArchive
   }
 
-  /** SQLite archive status of one workspace (for the state route). */
+  /**
+   * SQLite archive status of one workspace (for the state route). The
+   * archived-count query rides a short TTL cache (P1-2⑥, same pattern as
+   * the state route's topology cache): the route is polled every few
+   * seconds per workspace and countRuns is a synchronous DatabaseSync
+   * query. Declared staleness: the badge may lag ≤10s.
+   */
   async sqliteStatus(workspace: string): Promise<{ enabled: boolean; archived: number; dbFile: string | null }> {
     const enabled = await this.sqliteEnabled(workspace)
     if (!enabled) return { enabled: false, archived: 0, dbFile: null }
+    const dbFile = this.archive.dbFile(workspace, this.config.runDirName)
+    const hit = this.archivedCountCache.get(workspace)
+    if (hit && Date.now() - hit.at < ARCHIVED_COUNT_TTL_MS) {
+      return { enabled: true, archived: hit.value, dbFile }
+    }
     let archived = 0
     try {
       archived = this.archive.countRuns(workspace, this.config.runDirName)
     } catch {
       archived = 0
     }
-    return { enabled: true, archived, dbFile: this.archive.dbFile(workspace, this.config.runDirName) }
+    this.archivedCountCache.set(workspace, { at: Date.now(), value: archived })
+    return { enabled: true, archived, dbFile }
   }
 
   /** Toggle the SQLite archive; enabling backfills the existing file store. */
@@ -674,7 +691,12 @@ export default class AceHarnessService extends Service {
 
   /** Close archive database handles (plugin dispose). */
   closeArchives(): void {
-    this.archive.close()
+    // Drain queued mirror writes first (P1-2⑥), best effort; the JSON files
+    // stay authoritative if the process exits before the flush lands.
+    void this.persistence
+      .flushArchives()
+      .catch(() => {})
+      .finally(() => this.archive.close())
   }
 
   /** Workspace run statistics (archive SQL when enabled, JSON scan otherwise). */

@@ -100,21 +100,50 @@ export function projectRunStateToStream(stream: RunStreamState, runState: RunSta
 /** The per-run persist pipeline: files authoritative, mirrors best-effort. */
 export class RunPersistence {
   private readonly deps: RunPersistenceDeps
+  /**
+   * Per-workspace SQLite mirror queues (P1-2⑥): archive writes run on these
+   * FIFO chains, off the persist hot path — a synchronous DatabaseSync write
+   * of a growing state_json would otherwise block the event loop on every
+   * step. Order within one workspace is preserved; the JSON files stay
+   * authoritative, so a crash can lose only not-yet-flushed mirror rows.
+   */
+  private readonly archiveQueues = new Map<string, Promise<void>>()
 
   constructor(deps: RunPersistenceDeps) {
     this.deps = deps
   }
 
-  /** Append one audit event: JSONL is authoritative; SQLite mirrors when on. */
-  async writeAudit(workspace: string, runId: string, event: Record<string, unknown>): Promise<void> {
-    await appendAudit(workspace, runId, this.deps.runDirName, event)
-    if (await this.deps.sqliteEnabled(workspace)) {
+  /** Enqueue one archive mirror write for a workspace (never throws). */
+  private enqueueArchiveWrite(workspace: string, write: () => void): void {
+    const key = workspace
+    const previous = this.archiveQueues.get(key) ?? Promise.resolve()
+    const next = previous.then(async () => {
+      if (!(await this.deps.sqliteEnabled(workspace))) return
       try {
-        this.deps.archive.archiveAudit(workspace, this.deps.runDirName, runId, event)
+        write()
       } catch {
         // Archive is a mirror; ignore write failures.
       }
-    }
+    })
+    this.archiveQueues.set(
+      key,
+      next.catch(() => {
+        // Unreachable (the task swallows its errors); keep the chain alive.
+      }),
+    )
+  }
+
+  /** Drain every queued archive write (plugin dispose; best effort). */
+  async flushArchives(): Promise<void> {
+    await Promise.all([...this.archiveQueues.values()])
+  }
+
+  /** Append one audit event: JSONL is authoritative; SQLite mirrors when on. */
+  async writeAudit(workspace: string, runId: string, event: Record<string, unknown>): Promise<void> {
+    await appendAudit(workspace, runId, this.deps.runDirName, event)
+    this.enqueueArchiveWrite(workspace, () =>
+      this.deps.archive.archiveAudit(workspace, this.deps.runDirName, runId, event),
+    )
   }
 
   /**
@@ -140,15 +169,11 @@ export class RunPersistence {
   /** Persist one run snapshot through the full pipeline. */
   private async persistSnapshot(workspace: string, runId: string, runState: RunState): Promise<void> {
     await saveRunState(workspace, runState, this.deps.runDirName)
-    // Opt-in SQLite mirror: long-term, queryable evidence chain. A mirror
-    // failure must never break the run — the JSON file stays authoritative.
-    if (await this.deps.sqliteEnabled(workspace)) {
-      try {
-        this.deps.archive.archiveRun(workspace, this.deps.runDirName, runState)
-      } catch {
-        // Archive is a mirror; ignore write failures.
-      }
-    }
+    // Opt-in SQLite mirror: long-term, queryable evidence chain. Queued off
+    // the hot path (P1-2⑥); a mirror failure must never break the run.
+    this.enqueueArchiveWrite(workspace, () =>
+      this.deps.archive.archiveRun(workspace, this.deps.runDirName, runState),
+    )
     // Evidence chain: diff the snapshot into granular audit events
     // (state-end / waiting-human / human-resolved) so the audit timeline
     // tells the full story, not just start/resume/end. A run resumed into
