@@ -64,12 +64,37 @@ export async function listRunIds(workspace: string, runDirName: string): Promise
   }
 }
 
+/** Non-terminal runs untouched for this long are treated as interrupted. */
+export const STALE_RUN_MS = 10 * 60_000
+
+const TERMINAL_STATUSES = new Set(['completed', 'failed', 'stopped', 'crashed'])
+
+/**
+ * Normalize a loaded run state for display: a non-terminal run whose
+ * `updatedAt` is older than the staleness bound was abandoned by a dead
+ * process. Its status reads as `crashed` (without touching the stored
+ * file, so `/workflow resume` keeps working), keeping zombie `running`
+ * entries out of live discovery.
+ */
+export function normalizeStaleRun(state: RunState, now = Date.now()): RunState {
+  if (TERMINAL_STATUSES.has(state.status)) return state
+  const updated = Date.parse(state.updatedAt)
+  if (Number.isFinite(updated) && now - updated > STALE_RUN_MS) {
+    return {
+      ...state,
+      status: 'crashed',
+      error: '运行中断（进程重启或长时间无更新），可用 /workflow resume 恢复',
+    }
+  }
+  return state
+}
+
 /** Load every run state of a workspace (skipping unreadable ones). */
 export async function listRunStates(workspace: string, runDirName: string): Promise<RunState[]> {
   const states: RunState[] = []
   for (const runId of await listRunIds(workspace, runDirName)) {
     const state = await loadRunState(workspace, runId, runDirName)
-    if (state) states.push(state)
+    if (state) states.push(normalizeStaleRun(state))
   }
   return states
 }
