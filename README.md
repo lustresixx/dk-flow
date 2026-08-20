@@ -87,7 +87,13 @@ workflow:
 
 - **自动重试**：agent / 快速 LLM / 子工作流步骤执行抛错（模型调用失败、超时、子流崩溃）时按指数退避重试（`maxRetries` 为额外尝试次数，0 禁用）；**正常的 fail 裁决是流转信号，不会重试**；脚本步骤结果确定，也不重试。运行记录会显示「重试 N 次」
 - **步骤级超时**：`timeoutMinutes` 覆盖插件全局 `stepTimeoutMs`（AI/LLM）与脚本默认超时（JS 10s / Python 30s），适合 Python 等慢步骤
-- **导入脚本**：`scriptFile` 为工作区相对路径，与内联 `script` 二选一；`.js/.mjs/.cjs` 读入 node:vm 沙箱，`.py` 以 `pythonCommand`（插件配置，默认 `python`）启动子进程——`context` 以 JSON 经 stdin 传入，脚本最后向 stdout 输出一行 JSON `{"output", "success", "data"}`；非零退出、无法解析、超时均判 fail。脚本文件与 `preCommands` 同信任等级，请只运行可信来源的脚本
+- **导入脚本**：`scriptFile` 按「工作区根 → 脚本收集目录 `.ace-workflows/scripts/` → 内置脚本库 `resources/scripts/`」三级解析；`.js/.mjs/.cjs` 读入 node:vm 沙箱，`.py` 以 `pythonCommand`（插件配置，默认 `python`）启动子进程——`context` 以 JSON 经 stdin 传入，脚本最后向 stdout 输出一行 JSON `{"output", "success", "data"}`；非零退出、无法解析、超时均判 fail。脚本文件与 `preCommands` 同信任等级，请只运行可信来源的脚本
+
+### 脚本与 Skill 的收集目录
+
+- **脚本收集目录**：每个工作区的 `<工作区>/.ace-workflows/scripts/`——把通用脚本放进去，任何工作流的 `scriptFile` 都能直接按文件名引用；`/workflow scripts` 列出内置库 + 收集目录的脚本清单。内置库随插件打包在 `resources/scripts/`（示例：`to-upper.js`、`text-stats.py`）
+- **Skill 收集目录**：插件内置 `resources/skills/ace-workflow/SKILL.md`（框架使用指南：工具、DSL、脚本契约、参数约定），激活时自动安装到 `$DSH_HOME/skills/ace-workflow/`（已存在则不覆盖你的修改），供 DSH 的技能发现机制加载
+- 不再需要把脚本散落全盘：工作区专属脚本进工作区收集目录，跨工作区通用的可以复制进内置库（提 PR）或放进各工作区收集目录
 
 ## 代码优化评审工作流（七角色接力）
 

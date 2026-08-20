@@ -400,6 +400,7 @@ async function executeState(
           step.scriptFile?.trim() !== undefined && step.scriptFile.trim() !== ''
             ? await runScriptFile(step.scriptFile.trim(), scriptInput, {
                 projectRoot: runState.context.projectRoot,
+                scriptsHome: options.scriptsHome,
                 pythonCommand: options.pythonCommand ?? 'python',
                 timeoutMs,
                 signal: options.signal,

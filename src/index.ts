@@ -14,6 +14,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { fileURLToPath } from 'node:url'
 import { registerCommands } from './commands.js'
 import AceHarnessService, { type AceHarnessConfig } from './service.js'
+import { installFrameworkSkill } from './store/skill-install.js'
 import { registerTools } from './tools.js'
 
 /** Read a request body up to a byte cap. */
@@ -127,6 +128,13 @@ export function apply(ctx: Context, config: Config): void {
 
   registerCommands(ctx, aceHarness)
   registerTools(ctx, aceHarness)
+
+  // Collect the framework skill in the DSH skills directory (once; never
+  // overwrites user edits).
+  const skillPath = installFrameworkSkill()
+  if (skillPath !== null) {
+    ctx.logger('ace-harness').info(`installed framework skill at ${skillPath}`)
+  }
 
   ctx.systemPrompt.section({
     name: 'ace-harness:usage',

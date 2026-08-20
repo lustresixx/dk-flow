@@ -129,7 +129,7 @@ export function registerCommands(ctx: Context, service: AceHarnessService): void
   ctx.commands.register({
     name: 'workflow',
     description: 'ACE 状态机工作流：模板、实例、运行、恢复与治理',
-    input: { hint: 'list | templates | create <模板> | run <workflow> [--wait] | runs | show <runId> | resume <runId> | stop <runId> | validate <file>' },
+    input: { hint: 'list | templates | scripts | create <模板> | run <workflow> [--wait] | runs | show <runId> | resume <runId> | stop <runId> | validate <file>' },
     async handler(invocation: CommandInvocation): Promise<CommandResult> {
       return dispatch(ctx, service, invocation)
     },
@@ -183,6 +183,20 @@ async function dispatch(ctx: Context, service: AceHarnessService, invocation: Co
             .map((a) => `· ${a.name} [${a.team}/${a.roleType}] — ${a.description ?? a.baseCapability ?? ''}`)
             .join('\n'),
         )
+      }
+      case 'scripts': {
+        const scripts = await service.listScripts(workspace)
+        if (scripts.length === 0) {
+          return ok('（无可用脚本。内置库随插件打包；通用脚本可放入工作区 .ace-workflows/scripts/ 目录收集复用）')
+        }
+        const lines = [
+          '可用脚本（scriptFile 解析顺序：工作区根 → .ace-workflows/scripts/ → 内置库）：',
+          ...scripts.map((script) =>
+            `  · ${script.name} [${script.source === 'builtin' ? '内置' : '工作区'}]${script.description ? ` — ${script.description}` : ''}`,
+          ),
+          '把通用脚本放进工作区 .ace-workflows/scripts/ 即可被任何工作流的 scriptFile 直接引用。',
+        ]
+        return ok(lines.join('\n'))
       }
       case 'create': {
         const templateId = positional[1]
@@ -267,7 +281,7 @@ async function dispatch(ctx: Context, service: AceHarnessService, invocation: Co
       }
       default:
         return err(
-          `未知子命令「${sub}」。可用：list | templates | agents | create <模板> | run <workflow> [--wait] | runs | show <runId> | resume <runId> | stop <runId> | validate <file> | delete <file>`,
+          `未知子命令「${sub}」。可用：list | templates | agents | scripts | create <模板> | run <workflow> [--wait] | runs | show <runId> | resume <runId> | stop <runId> | validate <file> | delete <file>`,
         )
     }
   } catch (error) {

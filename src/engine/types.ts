@@ -190,6 +190,8 @@ export interface EngineRunOptions {
   resolveSubworkflow: (configFile: string) => Promise<WorkflowConfig>
   /** Command used to launch Python for `scriptFile` steps ending in `.py`. */
   pythonCommand?: string
+  /** Workspace scripts collection directory (`<workspace>/.ace-workflows/scripts`). */
+  scriptsHome?: string
   /** Human decision when no transition matches. */
   askHumanTransition: (input: {
     state: string

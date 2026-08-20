@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { loadBuiltinAgents, loadBuiltinTemplates } from '../src/catalog/index.js'
+import { listBuiltinScripts, loadBuiltinAgents, loadBuiltinTemplates } from '../src/catalog/index.js'
 import { validateWorkflowReferences } from '../src/dsl/load.js'
 import { instantiateTemplate } from '../src/templates/instantiate.js'
 
@@ -27,6 +27,16 @@ describe('built-in catalog', () => {
     for (const agent of agents) {
       expect(agent.systemPrompt.length).toBeGreaterThan(50)
       expect(['blue', 'red', 'judge', 'black-gold']).toContain(agent.team)
+    }
+  })
+
+  it('ships the reusable built-in script library with one-line descriptions', async () => {
+    const scripts = await listBuiltinScripts()
+    expect(scripts.map((script) => script.name)).toEqual(
+      expect.arrayContaining(['to-upper.js', 'text-stats.py']),
+    )
+    for (const script of scripts) {
+      expect(script.description.length).toBeGreaterThan(0)
     }
   })
 

@@ -5,8 +5,8 @@
  * panel consume this service.
  * @module dsh-ace-harness/service
  */
-import { readFile } from 'node:fs/promises'
-import { isAbsolute, resolve } from 'node:path'
+import { readFile, readdir } from 'node:fs/promises'
+import { isAbsolute, join, resolve } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
@@ -22,6 +22,8 @@ declare module '@deepseek-ai/dsh-jobs' {
   }
 }
 import {
+  firstCommentLine,
+  listBuiltinScripts,
   loadBuiltinAgents,
   loadBuiltinTemplates,
   readBuiltinTemplateSources,
@@ -257,6 +259,13 @@ function toText(blocks: ContentBlock[]): string {
     .trim()
 }
 
+/** One script discoverable by `/workflow scripts`. */
+export interface WorkflowScriptEntry {
+  name: string
+  source: 'builtin' | 'workspace'
+  description: string
+}
+
 export default class AceHarnessService extends Service {
   private readonly config: Required<AceHarnessConfig>
   private agents: AgentDefinition[] = []
@@ -300,6 +309,28 @@ export default class AceHarnessService extends Service {
   async listTemplates(): Promise<BuiltinWorkflowTemplate[]> {
     await this.catalogReady
     return [...this.templates]
+  }
+
+  /** One script discoverable by `/workflow scripts`. */
+  async listScripts(workspace: string): Promise<WorkflowScriptEntry[]> {
+    const scripts: WorkflowScriptEntry[] = (await listBuiltinScripts()).map((script) => ({
+      ...script,
+      source: 'builtin' as const,
+    }))
+    const dir = join(workspace, this.config.runDirName, 'scripts')
+    try {
+      const entries = (await readdir(dir)).filter((name) => /\.(js|mjs|cjs|py)$/.test(name))
+      for (const entry of entries) {
+        scripts.push({
+          name: entry,
+          source: 'workspace',
+          description: firstCommentLine(await readFile(join(dir, entry), 'utf8')),
+        })
+      }
+    } catch {
+      // The collection directory does not exist yet: nothing to list.
+    }
+    return scripts.sort((a, b) => a.source.localeCompare(b.source) || a.name.localeCompare(b.name))
   }
 
   /** The agent names available to workflow configs in this deployment. */
@@ -810,6 +841,7 @@ export default class AceHarnessService extends Service {
       persist,
       load,
       pythonCommand: this.config.pythonCommand,
+      scriptsHome: join(workspace, this.config.runDirName, 'scripts'),
       resolveSubworkflow: async (configFile: string) => {
         const resolved = await this.resolveWorkflowConfig(workspace, configFile)
         if (!resolved) throw new EngineError(`子工作流「${configFile}」不存在`, 'NO_MATCH')

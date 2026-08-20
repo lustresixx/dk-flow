@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -74,7 +74,7 @@ describe('runScriptFile', () => {
   it('fails readably for a missing file', async () => {
     const result = await runScriptFile('missing.js', input, options())
     expect(result.success).toBe(false)
-    expect(result.error).toContain('读取失败')
+    expect(result.error).toContain('脚本不存在')
   })
 
   it('rejects unknown extensions', async () => {
@@ -87,6 +87,29 @@ describe('runScriptFile', () => {
     const result = await runScriptFile(`..${sep}outside.py`, input, options())
     expect(result.success).toBe(false)
     expect(result.error).toContain('越界')
+  })
+
+  it('resolves scripts from the workspace scripts collection directory', async () => {
+    const scriptsDir = join(dir, 'scripts-home')
+    mkdirSync(scriptsDir, { recursive: true })
+    writeFileSync(join(scriptsDir, 'collect.js'), 'return { output: "collected: " + context.requirements, success: true }')
+    const result = await runScriptFile('collect.js', input, options({ scriptsHome: scriptsDir }))
+    expect(result.success).toBe(true)
+    expect(result.output).toBe('collected: hello')
+  })
+
+  it('resolves bare names from the built-in script library', async () => {
+    const result = await runScriptFile('to-upper.js', { ...input, requirements: 'abc' }, options())
+    expect(result.success).toBe(true)
+    expect(result.output).toBe('ABC')
+  })
+
+  it('reports the searched locations when a script is missing', async () => {
+    const result = await runScriptFile('nope.js', input, options({ scriptsHome: join(dir, 'scripts-home') }))
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('脚本不存在')
+    expect(result.output).toContain('脚本收集目录')
+    expect(result.output).toContain('/workflow scripts')
   })
 })
 

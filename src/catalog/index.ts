@@ -97,3 +97,35 @@ export async function readBuiltinTemplateSources(
     return null
   }
 }
+
+/** First comment line (`#` or `//`) of a script file, as its one-line description. */
+export function firstCommentLine(text: string): string {
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (trimmed === '') continue
+    if (trimmed.startsWith('#') || trimmed.startsWith('//')) {
+      return trimmed.replace(/^#+\s*/, '').replace(/^\/\/+\s*/, '').slice(0, 120)
+    }
+    return ''
+  }
+  return ''
+}
+
+/** List the packaged reusable scripts in `resources/scripts`. */
+export async function listBuiltinScripts(): Promise<{ name: string; description: string }[]> {
+  const dir = new URL('scripts/', resourcesRoot())
+  let entries: string[] = []
+  try {
+    entries = (await readdir(dir)).filter((name) => /\.(js|mjs|cjs|py)$/.test(name))
+  } catch {
+    return []
+  }
+  const scripts: { name: string; description: string }[] = []
+  for (const entry of entries) {
+    scripts.push({
+      name: entry,
+      description: firstCommentLine(await readFile(new URL(entry, dir), 'utf8')),
+    })
+  }
+  return scripts.sort((a, b) => a.name.localeCompare(b.name))
+}

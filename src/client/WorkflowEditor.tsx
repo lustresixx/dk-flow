@@ -586,7 +586,7 @@ function StepEditor(props: {
         <>
           <input
             type="text"
-            placeholder="scriptFile：导入脚本文件（可选，与内联脚本二选一；.js 进沙箱，.py 用 Python 运行）"
+            placeholder="scriptFile（可选，与内联二选一；解析顺序：工作区根 → .ace-workflows/scripts/ 收集目录 → 内置库；.js 进沙箱，.py 用 Python）"
             value={draft.scriptFile}
             onChange={(event) => { set({ scriptFile: event.target.value }) }}
           />
