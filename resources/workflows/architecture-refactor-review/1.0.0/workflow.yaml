@@ -1,0 +1,193 @@
+workflow:
+  name: 架构重构评审
+  description: 架构逻辑优化的对抗式流水线：诊断 → 调研 → 对抗 → 方案审批 → 行为基线 → 实施 → 回归 → 对抗审查 → 终审审批 → 交付
+  mode: state-machine
+  maxTransitions: 30
+  supervisor:
+    enabled: true
+    agent: default-supervisor
+    stageReviewEnabled: true
+    checkpointAdviceEnabled: true
+    scoringEnabled: true
+    experienceEnabled: true
+    checkpointPolicy: risks
+  states:
+    - name: 架构诊断
+      description: 通读代码结构，找出架构问题与优化假设
+      isInitial: true
+      isFinal: false
+      maxSelfTransitions: 2
+      position: { x: 80, y: 240 }
+      steps:
+        - name: 诊断架构问题
+          agent: architect
+          role: defender
+          task: |
+            阅读项目结构、模块边界与核心数据流，识别架构逻辑上的问题：
+            职责混乱、模块耦合、循环依赖、重复实现、隐式全局依赖、难以测试的结构。
+            输出：问题清单（按严重度排序）+ 每个问题的优化假设 + 判断"哪些改动可能破坏现有功能"。
+      transitions:
+        - { to: 调研对标, condition: { verdict: success }, priority: 10, label: 成功 }
+        - { to: 架构诊断, condition: { verdict: fail }, priority: 20, label: 重做 }
+    - name: 调研对标
+      description: 检索架构最佳实践与参考案例，标注证据强度
+      isInitial: false
+      isFinal: false
+      maxSelfTransitions: 2
+      position: { x: 400, y: 240 }
+      steps:
+        - name: 调研架构实践
+          agent: researcher
+          role: defender
+          task: |
+            针对「架构诊断」产出的问题清单，检索同类系统的架构最佳实践与参考案例
+            （模块化、依赖方向、分层、测试策略等），每条结论标注来源与证据强度。
+            输出：可复用的架构模式清单 + 证据链接 + 不适用场景说明。
+      transitions:
+        - { to: 对抗挑战, condition: { verdict: success }, priority: 10, label: 成功 }
+        - { to: 调研对标, condition: { verdict: fail }, priority: 20, label: 补充 }
+    - name: 对抗挑战
+      description: 攻击诊断与改造方向，找出风险与反例
+      isInitial: false
+      isFinal: false
+      position: { x: 720, y: 240 }
+      steps:
+        - name: 挑战改造方向
+          agent: solution-breaker
+          role: attacker
+          task: |
+            只基于提供的证据攻击「架构诊断」的问题清单与「调研对标」的模式建议：
+            找出反例、边界条件，以及最关键的——哪些改造会以隐蔽方式破坏现有功能
+            （行为变化、性能回退、兼容性破坏、并发/时序问题）。
+            每条质疑给出可验证的场景或依据。输出风险清单，按破坏性排序。
+      transitions:
+        - { to: 方案定稿, condition: { verdict: success }, priority: 10, label: 成功 }
+        - { to: 架构诊断, condition: { verdict: fail }, priority: 20, label: 回到诊断 }
+    - name: 方案定稿
+      description: 综合三方产出敲定改造方案，需人工批准（审批门 1）
+      isInitial: false
+      isFinal: false
+      requireHumanApproval: true
+      supervisorCheckpoint: true
+      position: { x: 1040, y: 240 }
+      steps:
+        - name: 敲定改造方案
+          agent: design-judge
+          role: judge
+          task: |
+            综合诊断、调研与对抗产出，裁决并敲定最终改造方案：
+            明确的变更清单（文件/模块级）、实施顺序、每项变更的理由，
+            以及「功能等价」验收标准（必须包含：现有测试全部通过 + 行为不变的关键证据）。
+            方案不可行的部分直接否决并说明原因。
+      transitions:
+        - { to: 行为基线, condition: { verdict: success }, priority: 10, label: 批准后基线 }
+        - { to: 架构诊断, condition: { verdict: fail }, priority: 20, label: 回到诊断 }
+    - name: 行为基线
+      description: 改造前记录测试与性能基线，作为"不破坏功能"的锚点
+      isInitial: false
+      isFinal: false
+      position: { x: 1360, y: 240 }
+      steps:
+        - name: 记录行为基线
+          agent: tester
+          role: defender
+          task: |
+            改造开始前，运行项目现有测试套件与关键构建/检查命令，
+            记录：测试通过/失败情况、关键性能指标（耗时、内存等）、当前行为基线。
+            这是后续"不破坏功能"的对照锚点，必须如实记录，基线本身有问题也要报告。
+      transitions:
+        - { to: 实施改造, condition: { verdict: success }, priority: 10, label: 开始实施 }
+        - { to: 方案定稿, condition: { verdict: fail }, priority: 20, label: 回到方案 }
+    - name: 实施改造
+      description: 按批准方案实施，逐项记录变更与理由
+      isInitial: false
+      isFinal: false
+      maxSelfTransitions: 2
+      position: { x: 1680, y: 240 }
+      steps:
+        - name: 实施架构改造
+          agent: developer
+          role: defender
+          task: |
+            严格按「方案定稿」批准的变更清单实施改造：
+            小步提交、每项变更记录（改了什么/为什么/对应哪个问题），
+            不动方案之外的部分；发现方案与代码实际不符时停下并说明。
+      transitions:
+        - { to: 回归验证, condition: { verdict: success }, priority: 10, label: 成功 }
+        - { to: 实施改造, condition: { verdict: fail }, priority: 20, label: 重做 }
+    - name: 回归验证
+      description: 与基线对比验证功能等价性
+      isInitial: false
+      isFinal: false
+      position: { x: 2000, y: 240 }
+      steps:
+        - name: 回归验证等价性
+          agent: tester
+          role: defender
+          task: |
+            跑全量测试并与「行为基线」对比：测试通过率不得低于基线、关键行为不得变化；
+            补充针对改动点的边界与回归用例；对比性能指标并说明差异原因。
+            任何回归都要给出失败证据，不得放过。
+      transitions:
+        - { to: 对抗审查, condition: { verdict: success }, priority: 10, label: 通过 }
+        - { to: 实施改造, condition: { verdict: fail }, priority: 20, label: 回修 }
+    - name: 对抗审查
+      description: 攻击已完成的改动集，找回归与新的架构反例
+      isInitial: false
+      isFinal: false
+      position: { x: 2320, y: 240 }
+      steps:
+        - name: 攻击改动集
+          agent: code-hunter
+          role: attacker
+          task: |
+            只基于证据攻击「实施改造 + 回归验证」的产出：
+            寻找未覆盖的回归场景、新引入的耦合/重复、被忽略的边界与并发问题。
+            每条问题给出可验证的复现场景或代码位置。
+      transitions:
+        - { to: 终审, condition: { verdict: success }, priority: 10, label: 通过 }
+        - { to: 实施改造, condition: { verdict: fail }, priority: 20, label: 回修 }
+    - name: 终审
+      description: 对照方案与证据终审，需人工批准（审批门 2）
+      isInitial: false
+      isFinal: false
+      requireHumanApproval: true
+      supervisorCheckpoint: true
+      position: { x: 2640, y: 240 }
+      steps:
+        - name: 终审裁决
+          agent: code-judge
+          role: judge
+          task: |
+            对照「方案定稿」的变更清单与验收标准，审查全程证据链
+            （诊断/调研/对抗/基线/实施/回归/对抗审查），裁决：
+            success = 改造完成且功能等价性有据可依，可交付；
+            fail = 证据不足或仍有回归风险，回到实施改造。
+      transitions:
+        - { to: 交付汇总, condition: { verdict: success }, priority: 10, label: 批准交付 }
+        - { to: 实施改造, condition: { verdict: fail }, priority: 20, label: 回修 }
+    - name: 交付汇总
+      description: 汇总改造清单、验证证据与残余风险
+      isInitial: false
+      isFinal: true
+      position: { x: 2960, y: 240 }
+      steps:
+        - name: 汇总交付报告
+          agent: documentation-writer
+          role: defender
+          task: |
+            汇总：架构问题清单 → 批准方案 → 变更清单 → 测试与性能对比证据 →
+            残余风险与后续建议，形成可追溯的交付报告。
+      transitions: []
+context:
+  projectRoot: ""
+  workspaceMode: in-place
+  requirements: ""
+  gitBaselineEnabled: true
+  taskInput:
+    fields:
+      - id: requirements
+        label: 重构目标
+        type: textarea
+        required: true
+        placeholder: "例如：拆分职责混乱的引擎模块、消除循环依赖；约束：全部 182 个测试保持通过、公开 API 不变"

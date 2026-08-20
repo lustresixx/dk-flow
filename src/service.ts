@@ -1016,19 +1016,32 @@ export default class AceHarnessService extends Service {
         return resolved.config
       },
       askHumanTransition: async ({ state, candidates, signal: askSignal }) => {
+        // Approval gates arrive as the single `__continue__` candidate; render
+        // them as an explicit approve/stop choice instead of a raw token.
+        const approval = candidates.length === 1 && candidates[0] === '__continue__'
         const answer = await this.ctx.userQuestions.ask({
           questions: [
             {
               id: 'transition',
-              header: '工作流决策',
-              question: `工作流在状态「${state}」暂停，请选择下一步：`,
-              options: candidates.map((candidate) => ({ label: candidate })),
+              header: approval ? '工作流审批' : '工作流决策',
+              question: approval
+                ? `状态「${state}」已完成，需要人工批准后才会继续：`
+                : `工作流在状态「${state}」暂停，请选择下一步：`,
+              options: approval
+                ? [
+                    { label: '批准，继续运行', description: '进入下一状态' },
+                    { label: '停止运行', description: '以人工停止结束本次运行' },
+                  ]
+                : candidates.map((candidate) => ({ label: candidate })),
             },
           ],
           agent: parent,
           signal: askSignal,
         })
-        return answer.answers[0]?.selected[0] ?? ''
+        const selected = answer.answers[0]?.selected[0] ?? ''
+        if (approval && selected === '批准，继续运行') return '__continue__'
+        if (approval && selected === '停止运行') return 'stop'
+        return selected
       },
     }
   }

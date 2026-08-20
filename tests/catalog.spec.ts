@@ -51,6 +51,7 @@ describe('built-in catalog', () => {
         'code-optimization-review',
         'mixed-agent-script',
         'simple-llm-qa',
+        'architecture-refactor-review',
       ]),
     )
     const agents = await loadBuiltinAgents()
@@ -110,6 +111,37 @@ describe('built-in catalog', () => {
     expect(qaSteps.map((s) => s.type)).toEqual(['llm', 'llm'])
     expect(qaSteps.map((s) => s.agent ?? null)).toEqual([null, null])
     expect(qa.config.workflow.states[0]!.steps[0]!.role).toBe('judge')
+    // The architecture review pairs adversarial agents with two human approval gates.
+    const arch = templates.find((t) => t.id === 'architecture-refactor-review')!
+    expect(arch.config.workflow.states.map((s) => s.name)).toEqual([
+      '架构诊断',
+      '调研对标',
+      '对抗挑战',
+      '方案定稿',
+      '行为基线',
+      '实施改造',
+      '回归验证',
+      '对抗审查',
+      '终审',
+      '交付汇总',
+    ])
+    const archSteps = arch.config.workflow.states.flatMap((s) => s.steps)
+    expect(archSteps.map((s) => s.agent)).toEqual([
+      'architect',
+      'researcher',
+      'solution-breaker',
+      'design-judge',
+      'tester',
+      'developer',
+      'tester',
+      'code-hunter',
+      'code-judge',
+      'documentation-writer',
+    ])
+    const approvalStates = arch.config.workflow.states.filter((s) => s.requireHumanApproval === true)
+    expect(approvalStates.map((s) => s.name)).toEqual(['方案定稿', '终审'])
+    expect(arch.config.workflow.states[3]!.steps[0]!.role).toBe('judge')
+    expect(arch.config.workflow.states[4]!.steps[0]!.role).toBe('defender')
   })
 })
 

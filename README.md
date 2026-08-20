@@ -11,7 +11,7 @@
 
 - **状态机工作流**：状态串行/并行执行步骤，`success / fail` 二元流转（由 AI 判断，兼容旧 `pass / conditional_pass` YAML），熔断保护（最大转移数 / 最大自转移数）
 - **四类节点**：AI 步骤（专属角色子代理 + 工具过滤）、快速 LLM（单轮直调，无子代理开销）、脚本（JS 沙箱 / Python 子进程，严格输入输出契约）、子工作流（嵌套 + 深度上限）
-- **对抗式多 Agent**：13 个内置角色（defender / attacker / judge / supervisor），红蓝评审、七角色接力评审等 7 个内置模板
+- **对抗式多 Agent**：13 个内置角色（defender / attacker / judge / supervisor），红蓝评审、七角色接力评审、带人工审批门的架构重构评审等 8 个内置模板
 - **平台级运行治理**：断点恢复、崩溃自愈、人工审批门、风险自适应 supervisor、自动重试（指数退避）、步骤级超时、后台 job、停止即停、并发上限
 - **三大入口**：全屏工作台（React Flow 可视化编辑器 + 运行时拓扑图 + 流式侧边栏）、`/workflow` 斜杠命令族、模型工具（`workflow_list` / `run_workflow` / `workflow_manage`）
 - **单节点独立验证**：`/workflow test <工作流> <状态> <步骤>` 或编辑器里每个步骤的「▶ 验证」按钮——只跑一个节点看产出与 verdict，不跑整个工作流
@@ -42,7 +42,7 @@ dsh --profile my-profile --port 4090
 
 ### 工作台
 
-- **模板页**：7 个内置模板（结构预览 + 运行时参数表单），「直接运行」或「创建并编排」（创建不填参，留空的必填参数转为运行时询问）
+- **模板页**：8 个内置模板（结构预览 + 运行时参数表单），「直接运行」或「创建并编排」（创建不填参，留空的必填参数转为运行时询问）
 - **工作流页**：实例列表；运行参数在这里填写（缺必填项会被页面内拦下）；编排 / 删除
 - **运行记录页**：运行时拓扑图（状态按成功/失败着色、执行过的路径加亮）+ 状态时间线（每步输出、verdict、重试次数、supervisor 评分）+ 恢复 / 停止
 - **编辑器**：拖节点布局、右缘拖线连转移（成功/失败/无条件）、节点检查器编辑状态与步骤，保存即校验
@@ -139,6 +139,7 @@ workflow:
 | `simple-script-pipeline` | 纯脚本示例（无需模型凭据） |
 | `mixed-agent-script` | 脚本 ⇄ AI 混编示例 |
 | `simple-llm-qa` | 快速 LLM 节点示例（判断 → 提炼 → 汇总） |
+| `architecture-refactor-review` | 架构重构评审：诊断 → 调研 → 对抗 → **方案审批** → 行为基线 → 实施 → 回归 → 对抗审查 → **终审审批** → 交付（10 状态、双人工审批门，全程对抗 + 功能等价验证） |
 
 内置 13 个角色 Agent：`default-supervisor`（supervisor）、`architect` / `developer` / `tester` / `documentation-writer` / `issue-reproducer`（defender）、`solution-breaker` / `code-hunter` / `stress-tester`（attacker）、`design-judge` / `code-judge`（judge）、`researcher` / `product-manager`（black-gold）。
 

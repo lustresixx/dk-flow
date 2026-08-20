@@ -1,0 +1,38 @@
+apiVersion: aceharness.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  id: architecture-refactor-review
+  version: 1.0.0
+  name: 架构重构评审
+  description: 面向架构逻辑优化的对抗式评审流水线：诊断 → 调研 → 对抗 → 方案审批 → 行为基线 → 实施 → 回归 → 对抗审查 → 终审审批 → 交付。全程由 AI 判断成功/失败，两个人工审批门保证「不破坏现有功能」。
+  category: 重构
+  tags: [架构, 重构, 对抗评审, 审批]
+  featured: true
+spec:
+  entrypoint: workflow.yaml
+  mode: state-machine
+  compatibility:
+    aceharness: ">=1.0.0-rc.8 <2.0.0"
+  parameters:
+    - { id: workflowName, label: 工作流名称, type: string, bind: /workflow/name, required: true, default: 架构重构评审 }
+    - { id: projectRoot, label: 项目目录, description: 待重构项目的绝对路径, type: directory, bind: /context/projectRoot, required: true }
+    - id: requirements
+      label: 重构目标
+      description: 要优化的架构问题、约束与验收期望（例如：拆分职责混乱的模块、消除循环依赖、保持全部测试通过）
+      type: text
+      bind: /context/requirements
+      required: true
+  dependencies:
+    agents:
+      - default-supervisor
+      - architect
+      - researcher
+      - solution-breaker
+      - design-judge
+      - tester
+      - developer
+      - code-hunter
+      - code-judge
+      - documentation-writer
+    skills: []
+    subworkflows: []

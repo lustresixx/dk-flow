@@ -4,6 +4,7 @@
 
 | 文件 | 说明 | 需要凭据 |
 |---|---|---|
+| `architecture-refactor-review.yaml` | 架构重构评审：10 状态对抗流水线 + 两个人工审批门（方案批准 / 终审批准），行为基线保证「不破坏现有功能」 | ✅（10 步 AI） |
 | `code-optimization-review.yaml` | 七角色接力：提出方案 → 资料调研 → 对抗挑战 → 敲定需求 → 代码优化 → 测试验证 → 最终评审 → 交付汇总 | ✅（8 步 AI） |
 | `mixed-agent-script.yaml` | Agent 与脚本交替：先脚本、再 Agent、再脚本、再 Agent、最后脚本，Dify 风格混编 | ✅（2 步 AI） |
 | `simple-llm-qa.yaml` | 轻量 llm 节点示例：快速判断 → 要点提炼 → 脚本汇总；每个 llm 节点只是一次单轮模型调用，不启动子代理、不带工具 | ✅（2 次单轮调用） |
@@ -11,8 +12,8 @@
 
 ## 使用方式（任选）
 
-1. **插件内直接用**：这些模板已作为内置模板打包（`code-optimization-review` / `mixed-agent-script` /
-   `simple-llm-qa` / `simple-script-pipeline`），工作台「模板」页填参即可创建实例并运行；
+1. **插件内直接用**：这些模板已作为内置模板打包（`architecture-refactor-review` / `code-optimization-review` /
+   `mixed-agent-script` / `simple-llm-qa` / `simple-script-pipeline`），工作台「模板」页填参即可创建实例并运行；
    参数可留空——创建时只固化填写的内容，留空的必填参数会在每次启动工作流时询问。
 
 2. **复制为实例**：把任意一份 YAML 拷贝到工作区的 `.dsh/workflows/` 目录（文件名自定，
@@ -23,10 +24,14 @@
    ```
 
 3. **API 实例化**：`POST /plugins/dsh-ace-harness/instantiate`，`templateId` 用
-   `code-optimization-review`、`mixed-agent-script`、`simple-llm-qa` 或 `simple-script-pipeline`。
+   `architecture-refactor-review`、`code-optimization-review`、`mixed-agent-script`、`simple-llm-qa` 或 `simple-script-pipeline`。
 
 ## 复用改法
 
+- `architecture-refactor-review.yaml`：改 `context.projectRoot`（项目绝对路径）与
+  `context.requirements`（重构目标与验收期望）；`requireHumanApproval: true` 的状态是人工审批门，
+  运行到那里会弹「工作流审批」卡片（批准继续 / 停止运行）。对抗强度可调：把 `对抗挑战`/`对抗审查` 的
+  attacker 角色换成 `stress-tester`（更偏性能/压力视角）或 `solution-breaker`。
 - `code-optimization-review.yaml`：改 `context.projectRoot`（项目绝对路径）与
   `context.requirements`（优化目标与验收期望），整套七角色评审即可复用到任意项目；
   也可以在编辑器里增删状态、换 agent 角色、调整转移。
