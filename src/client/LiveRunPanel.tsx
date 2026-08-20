@@ -177,25 +177,27 @@ export function LiveRunPanel(props: LiveRunPanelProps): JSX.Element | null {
       </header>
       {!collapsed ? (
         <div className={styles.body}>
-          <div className={styles.progressTrack}>
-            <div className={styles.progressFill} style={{ width: `${progress}%` }} />
-            <span className={styles.progressText}>{snapshot.completedSteps}/{snapshot.totalSteps} 步</span>
-          </div>
-          <div className={styles.diagram}>
-            <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} fitView nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} zoomOnScroll={false} panOnDrag={false}>
-              <Background variant={BackgroundVariant.Dots} gap={18} size={1.2} />
-            </ReactFlow>
-          </div>
-          <div className={styles.stepLine}>
-            {snapshot.currentStep ? (
-              <>
-                <span className={styles.stepName}>{snapshot.currentStep}</span>
-                {snapshot.agent ? <span className={styles.stepAgent}>{snapshot.agent}</span> : null}
-                {snapshot.role && snapshot.role !== 'neutral' ? <span className={styles.stepRole}>{snapshot.role}</span> : null}
-              </>
-            ) : (
-              <span className={styles.stepName}>状态「{snapshot.currentState}」已结束</span>
-            )}
+          <div className={styles.diagramWrap}>
+            <div className={styles.diagramOverlay}>
+              <div className={styles.progressRow}>
+                <span className={styles.progressChip}>
+                  进度 {snapshot.completedSteps}/{snapshot.totalSteps} 步 · {progress}%
+                </span>
+                <span className={styles.stateChip} data-active={ACTIVE_STATUSES.has(snapshot.status) ? 'true' : 'false'}>
+                  {ACTIVE_STATUSES.has(snapshot.status)
+                    ? `执行中：${snapshot.currentState || '—'}${snapshot.currentStep ? ` · ${snapshot.currentStep}` : ''}`
+                    : `结束：${snapshot.currentState || '—'}`}
+                </span>
+              </div>
+              <div className={styles.miniTrack}>
+                <div className={styles.miniFill} style={{ width: `${progress}%` }} />
+              </div>
+            </div>
+            <div className={styles.diagram}>
+              <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} fitView nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} zoomOnScroll={false} panOnDrag={false}>
+                <Background variant={BackgroundVariant.Dots} gap={18} size={1.2} />
+              </ReactFlow>
+            </div>
           </div>
           {snapshot.stateOutputs.length > 0 ? (
             <div className={styles.trail}>

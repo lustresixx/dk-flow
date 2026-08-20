@@ -2,7 +2,7 @@
   position: fixed;
   top: 64px;
   right: 16px;
-  width: 380px;
+  width: 430px;
   max-height: calc(100vh - 140px);
   z-index: 9200;
   display: flex;
@@ -69,35 +69,66 @@
   gap: 8px;
   padding: 10px 12px 12px;
   min-height: 0;
+  overflow-y: auto;
 }
 
-.progressTrack {
+.diagramWrap {
   position: relative;
-  height: 16px;
+}
+
+.diagramOverlay {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  pointer-events: none;
+}
+
+.progressRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.progressChip,
+.stateChip {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 10px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(20, 22, 30, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #f3f4f6;
+  backdrop-filter: blur(4px);
+  white-space: nowrap;
+}
+
+.stateChip[data-active='true'] {
+  color: #7fb3ff;
+  border-color: rgba(127, 179, 255, 0.45);
+}
+
+.miniTrack {
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
   overflow: hidden;
 }
 
-.progressFill {
+.miniFill {
   height: 100%;
   border-radius: 999px;
   background: linear-gradient(90deg, #4f5bd5, #34d399);
   transition: width 0.4s ease;
 }
 
-.progressText {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  color: #f3f4f6;
-}
-
 .diagram {
-  height: 220px;
+  height: 320px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 10px;
   background: rgba(0, 0, 0, 0.2);
@@ -171,31 +202,6 @@
 .nodeVerdict {
   font-size: 9px;
   opacity: 0.85;
-}
-
-.stepLine {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  font-size: 12px;
-}
-
-.stepName {
-  font-weight: 700;
-  color: #f3f4f6;
-}
-
-.stepAgent {
-  color: #9a9ab0;
-}
-
-.stepRole {
-  font-size: 10px;
-  padding: 1px 8px;
-  border-radius: 999px;
-  color: #7fb3ff;
-  border: 1px solid rgba(127, 179, 255, 0.35);
 }
 
 .streamText {

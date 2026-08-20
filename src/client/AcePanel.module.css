@@ -33,14 +33,22 @@
 }
 
 .liveDot {
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 12px;
   border-radius: 999px;
-  background: #34d399;
-  animation: dotPulse 1.6s ease-in-out infinite;
+  background: radial-gradient(circle at 35% 35%, #b8ffe4, #34d399 60%, #0f9d6e);
+  animation: breathe 2.2s ease-in-out infinite;
 }
 
-@keyframes dotPulse {
-  0%, 100% { box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.3); }
-  50% { box-shadow: 0 0 0 6px rgba(52, 211, 153, 0.12); }
+@keyframes breathe {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.45), 0 0 12px 2px rgba(52, 211, 153, 0.55);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(0.82);
+    box-shadow: 0 0 0 7px rgba(52, 211, 153, 0.12), 0 0 22px 6px rgba(52, 211, 153, 0.35);
+  }
 }
