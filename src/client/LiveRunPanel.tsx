@@ -1,9 +1,10 @@
 /**
  * The live run sidebar: a docked panel that appears while a workflow runs,
  * showing the state-machine diagram with live verdict coloring, the current
- * step, and the streaming assistant output of the active subagent.
+ * step, the data-flow trail, and the streaming assistant output.
+ * Run discovery happens in the launcher; this panel streams the given run.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Background,
   BackgroundVariant,
@@ -16,7 +17,6 @@ import type { StreamSnapshotDto } from './types.ts'
 import styles from './LiveRunPanel.module.css'
 import '@xyflow/react/dist/style.css'
 
-const STATE_ROUTE = '/plugins/dsh-ace-harness/state'
 const STREAM_ROUTE = '/plugins/dsh-ace-harness/stream'
 
 const STATUS_TEXT: Record<string, string> = {
@@ -37,9 +37,6 @@ const VERDICT_TEXT: Record<string, string> = {
 }
 
 const ACTIVE_STATUSES = new Set(['preparing', 'running', 'waiting-human'])
-
-/** Runs finished this recently still auto-show so fast workflows stay visible. */
-const RECENT_MS = 2 * 60_000
 
 const EDGE_COLORS: Record<string, string> = {
   success: '#34d399',
@@ -77,62 +74,27 @@ function LiveStateNode(props: NodeProps<Node<LiveNodeData>>): JSX.Element {
 
 const nodeTypes = { liveState: LiveStateNode }
 
-export function LiveRunPanel(): JSX.Element | null {
+export interface LiveRunPanelProps {
+  /** Interesting run discovered by the launcher, or null when idle. */
+  runId: string | null
+}
+
+export function LiveRunPanel(props: LiveRunPanelProps): JSX.Element | null {
+  const { runId } = props
   const [snapshot, setSnapshot] = useState<StreamSnapshotDto | null>(null)
-  const [runId, setRunId] = useState<string | null>(null)
   const [dismissed, setDismissed] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState(false)
   const seqRef = useRef(0)
   const textRef = useRef<HTMLPreElement | null>(null)
 
-  // Discover interesting runs from the state route: active ones, plus runs
-  // that finished within the grace window so fast workflows stay visible.
+  // Stream the selected run; reset whenever the run changes or goes idle.
   useEffect(() => {
-    let alive = true
-    const tick = async (): Promise<void> => {
-      try {
-        const response = await fetch(STATE_ROUTE, { cache: 'no-store' })
-        if (!response.ok) return
-        const state = (await response.json()) as {
-          workspaces: { runs: { runId: string; status: string; startedAt: string; finishedAt: string | null }[] }[]
-        }
-        const now = Date.now()
-        const runs = state.workspaces
-          .flatMap((workspace) => workspace.runs)
-          .filter((run) => {
-            if (ACTIVE_STATUSES.has(run.status)) return true
-            const finished = Date.parse(run.finishedAt ?? '')
-            return Number.isFinite(finished) && now - finished < RECENT_MS
-          })
-          .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
-        if (!alive) return
-        if (runs.length === 0) {
-          setRunId(null)
-          setSnapshot(null)
-          setDismissed(null)
-          return
-        }
-        setRunId((current) => {
-          const currentStillShown = runs.some((run) => run.runId === current)
-          if (currentStillShown) return current
-          const active = runs.find((run) => ACTIVE_STATUSES.has(run.status))
-          return active?.runId ?? (runs[0]?.runId ?? null)
-        })
-      } catch {
-        // Polling is best-effort; the next tick retries.
-      }
+    if (runId === null) {
+      setSnapshot(null)
+      seqRef.current = 0
+      return
     }
-    void tick()
-    const timer = window.setInterval(() => { void tick() }, 3000)
-    return () => {
-      alive = false
-      window.clearInterval(timer)
-    }
-  }, [])
-
-  // Stream the selected run.
-  useEffect(() => {
-    if (!runId) return
+    if (dismissed === runId) return
     let alive = true
     const tick = async (): Promise<void> => {
       try {
@@ -153,7 +115,7 @@ export function LiveRunPanel(): JSX.Element | null {
       alive = false
       window.clearInterval(timer)
     }
-  }, [runId])
+  }, [runId, dismissed])
 
   // Auto-scroll the streaming text area.
   useEffect(() => {
