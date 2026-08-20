@@ -288,7 +288,14 @@ async function runWorkflow(
     const missing = (template.manifest.spec.parameters ?? [])
       .filter((p) => p.required && values[p.id] === undefined && p.default === undefined)
       .map((p) => p.label)
-    if (missing.length > 0) return err(`模板「${target}」缺少必填参数：${missing.join('、')}`)
+    if (missing.length > 0) {
+      return err(
+        `模板「${target}」缺少必填参数：${missing.join('、')}\n` +
+          `用法：/workflow run ${target}${(template.manifest.spec.parameters ?? [])
+            .map((p) => ` --param ${p.id}=<${p.label}>`)
+            .join('')}`,
+      )
+    }
     const instantiated = await service.instantiate(target, undefined, values, {})
     workflow = { config: instantiated.config, configFile: target }
   }
