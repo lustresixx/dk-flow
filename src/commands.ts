@@ -7,6 +7,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { CommandInvocation, CommandResult } from '@deepseek-ai/dsh-commands'
 import type AceHarnessService from './service.js'
+import { askMissingParameters } from './params-dialog.js'
 import type { RunResult, RunState } from './engine/types.js'
 import type { WorkflowConfig } from './dsl/types.js'
 
@@ -175,7 +176,7 @@ async function dispatch(ctx: Context, service: AceHarnessService, invocation: Co
         return ok(`已从模板「${templateId}」创建工作流（未保存，可用 --save 落盘到工作区 .dsh/workflows）：\n\n${instantiated.yamlText}`)
       }
       case 'run': {
-        return runWorkflow(service, agent, signal, positional, flags)
+        return runWorkflow(ctx, service, agent, signal, positional, flags)
       }
       case 'runs': {
         const runs = await service.listRuns(workspace)
@@ -250,6 +251,7 @@ function parseParamFlags(flags: Map<string, string>): Record<string, string> {
 }
 
 async function runWorkflow(
+  ctx: Context,
   service: AceHarnessService,
   agent: Agent,
   signal: AbortSignal,
@@ -287,14 +289,23 @@ async function runWorkflow(
     }
     const missing = (template.manifest.spec.parameters ?? [])
       .filter((p) => p.required && values[p.id] === undefined && p.default === undefined)
-      .map((p) => p.label)
     if (missing.length > 0) {
-      return err(
-        `模板「${target}」缺少必填参数：${missing.join('、')}\n` +
-          `用法：/workflow run ${target}${(template.manifest.spec.parameters ?? [])
-            .map((p) => ` --param ${p.id}=<${p.label}>`)
-            .join('')}`,
+      const filled = await askMissingParameters(
+        ctx,
+        agent,
+        signal,
+        template.manifest,
+        missing.map((p) => p.id),
       )
+      if (!filled) {
+        return err(
+          `模板「${target}」缺少必填参数：${missing.map((p) => p.label).join('、')}\n` +
+            `用法：/workflow run ${target}${(template.manifest.spec.parameters ?? [])
+              .map((p) => ` --param ${p.id}=<${p.label}>`)
+              .join('')}`,
+        )
+      }
+      Object.assign(values, filled)
     }
     const instantiated = await service.instantiate(target, undefined, values, {})
     workflow = { config: instantiated.config, configFile: target }

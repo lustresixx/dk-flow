@@ -8,6 +8,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { JsonValue } from '@deepseek-ai/dsh-session'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type AceHarnessService from './service.js'
+import { askMissingParameters } from './params-dialog.js'
 import type { RunState } from './engine/types.js'
 import type { WorkflowConfig } from './dsl/types.js'
 
@@ -152,6 +153,24 @@ export function registerTools(ctx: Context, service: AceHarnessService): void {
             throw new Error(
               `未找到 workflow 实例或模板「${target}」。可用内置模板 id：${templates.map((t) => t.id).join('、') || '无'}。工作区实例需先在工作台从模板创建（注意实例名≠模板名，例如 demo 实例 code-optimization-demo 来自模板 code-optimization-review）。`,
             )
+          }
+          const missing = (template.manifest.spec.parameters ?? []).filter(
+            (p) => p.required && values[p.id] === undefined && p.default === undefined,
+          )
+          if (missing.length > 0) {
+            const filled = await askMissingParameters(
+              ctx,
+              agent,
+              exec.signal,
+              template.manifest,
+              missing.map((p) => p.id),
+            )
+            if (!filled) {
+              throw new Error(
+                `缺少必填参数：${missing.map((p) => p.label).join('、')}（当前环境无交互界面，请通过 params 参数提供）`,
+              )
+            }
+            Object.assign(values, filled)
           }
           const instantiated = await service.instantiate(target, undefined, values, {})
           workflow = { config: instantiated.config, configFile: target }
