@@ -3,3 +3,4 @@ lib/
 *.tsbuildinfo
 coverage/
 .vitest/
+.ace-workflows/

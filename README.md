@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/badge/npm-dsh--ace--harness-blue)](https://github.com/lustresixx/dk-flow)
 [![license](https://img.shields.io/badge/license-Apache--2.0-green)](./LICENSE)
-[![tests](https://img.shields.io/badge/tests-177%20passing-brightgreen)](./tests)
+[![tests](https://img.shields.io/badge/tests-186%20passing-brightgreen)](./tests)
 [![node](https://img.shields.io/badge/node-%5E22.0.0%20%7C%7C%20%3E%3D24.0.0-informational)](#)
 
 把 ACEHarness 的工作流核心移植为 [DeepSeek Harness](https://github.com/deepseek-ai) 插件：**可视化编排的状态机工作流 + 对抗式多 Agent 评审 + 平台级运行治理**。目标是做成可部署到平台上的 workflow 产品内核（见 [docs/ROADMAP.md](./docs/ROADMAP.md)）。
