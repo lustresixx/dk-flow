@@ -283,6 +283,8 @@ export function EditorPane(props: EditorPaneProps): JSX.Element {
               setSelectedEdge(null)
             }}
             fitView
+            zoomOnScroll={false}
+            panOnScroll
           >
             <Background variant={BackgroundVariant.Dots} gap={22} size={1.5} />
             <Controls />

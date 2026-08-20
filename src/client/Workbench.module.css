@@ -91,6 +91,7 @@
   width: 300px;
   border-right: 1px solid rgba(255, 255, 255, 0.08);
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 12px;
   display: flex;
   flex-direction: column;
@@ -160,6 +161,7 @@
 .main {
   flex: 1;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 22px 28px;
 }
 

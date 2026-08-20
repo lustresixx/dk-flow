@@ -85,6 +85,7 @@
   padding: 10px 12px 12px;
   min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .diagramWrap {
@@ -247,6 +248,7 @@
   gap: 8px;
   max-height: 240px;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .stepLogEmpty {

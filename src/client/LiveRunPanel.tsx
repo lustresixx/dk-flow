@@ -93,15 +93,19 @@ export function LiveRunPanel(props: LiveRunPanelProps): JSX.Element | null {
   const [collapsed, setCollapsed] = useState(false)
   const seqRef = useRef(0)
   const logRef = useRef<HTMLDivElement | null>(null)
+  /** Follow the newest output only while the user is pinned to the bottom. */
+  const stickRef = useRef(true)
 
   // Stream the selected run; reset whenever the run changes or goes idle.
   useEffect(() => {
     if (runId === null) {
       setSnapshot(null)
       seqRef.current = 0
+      stickRef.current = true
       return
     }
     if (dismissed === runId) return
+    stickRef.current = true
     let alive = true
     const tick = async (): Promise<void> => {
       try {
@@ -124,10 +128,11 @@ export function LiveRunPanel(props: LiveRunPanelProps): JSX.Element | null {
     }
   }, [runId, dismissed])
 
-  // Auto-scroll the per-step output log.
+  // Follow the newest output while pinned to the bottom; never fight a
+  // user who scrolled up to read earlier entries.
   useEffect(() => {
     const node = logRef.current
-    if (node) node.scrollTop = node.scrollHeight
+    if (node && stickRef.current) node.scrollTop = node.scrollHeight
   }, [snapshot?.stepLog])
 
   const nodes = useMemo<Node<LiveNodeData>[]>(() => {    if (!snapshot) return []
@@ -220,13 +225,22 @@ export function LiveRunPanel(props: LiveRunPanelProps): JSX.Element | null {
               </div>
             </div>
             <div className={styles.diagram}>
-              <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} fitView nodesDraggable={false} nodesConnectable={false} elementsSelectable={false}>
+              <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} fitView nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} zoomOnScroll={false} panOnDrag>
                 <Background variant={BackgroundVariant.Dots} gap={18} size={1.2} />
                 <Controls showInteractive={false} />
               </ReactFlow>
             </div>
           </div>
-          <div ref={logRef} className={styles.stepLog}>
+          <div
+            ref={logRef}
+            className={styles.stepLog}
+            onScroll={() => {
+              const node = logRef.current
+              if (node) {
+                stickRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 40
+              }
+            }}
+          >
             {snapshot.stepLog.length === 0 ? (
               <div className={styles.stepLogEmpty}>（等待第一步开始…）</div>
             ) : (
