@@ -38,6 +38,9 @@ const VERDICT_TEXT: Record<string, string> = {
 
 const ACTIVE_STATUSES = new Set(['preparing', 'running', 'waiting-human'])
 
+/** Runs finished this recently still auto-show so fast workflows stay visible. */
+const RECENT_MS = 2 * 60_000
+
 const EDGE_COLORS: Record<string, string> = {
   success: '#34d399',
   pass: '#34d399',
@@ -82,7 +85,8 @@ export function LiveRunPanel(): JSX.Element | null {
   const seqRef = useRef(0)
   const textRef = useRef<HTMLPreElement | null>(null)
 
-  // Discover active runs from the state route.
+  // Discover interesting runs from the state route: active ones, plus runs
+  // that finished within the grace window so fast workflows stay visible.
   useEffect(() => {
     let alive = true
     const tick = async (): Promise<void> => {
@@ -90,22 +94,29 @@ export function LiveRunPanel(): JSX.Element | null {
         const response = await fetch(STATE_ROUTE, { cache: 'no-store' })
         if (!response.ok) return
         const state = (await response.json()) as {
-          workspaces: { runs: { runId: string; status: string; startedAt: string }[] }[]
+          workspaces: { runs: { runId: string; status: string; startedAt: string; finishedAt: string | null }[] }[]
         }
+        const now = Date.now()
         const runs = state.workspaces
           .flatMap((workspace) => workspace.runs)
-          .filter((run) => ACTIVE_STATUSES.has(run.status))
+          .filter((run) => {
+            if (ACTIVE_STATUSES.has(run.status)) return true
+            const finished = Date.parse(run.finishedAt ?? '')
+            return Number.isFinite(finished) && now - finished < RECENT_MS
+          })
           .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
         if (!alive) return
         if (runs.length === 0) {
-          setRunId((current) => (current === null ? null : null))
+          setRunId(null)
           setSnapshot(null)
           setDismissed(null)
           return
         }
         setRunId((current) => {
-          const currentStillActive = runs.some((run) => run.runId === current)
-          return currentStillActive ? current : (runs[0]?.runId ?? null)
+          const currentStillShown = runs.some((run) => run.runId === current)
+          if (currentStillShown) return current
+          const active = runs.find((run) => ACTIVE_STATUSES.has(run.status))
+          return active?.runId ?? (runs[0]?.runId ?? null)
         })
       } catch {
         // Polling is best-effort; the next tick retries.
