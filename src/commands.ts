@@ -8,6 +8,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { CommandInvocation, CommandResult } from '@deepseek-ai/dsh-commands'
 import type AceHarnessService from './service.js'
 import { askMissingParameters, askMissingTaskInputs } from './params-dialog.js'
+import { runJsonDto, runResultDto } from './projections.js'
 import type { RunResult, RunState } from './engine/types.js'
 import type { WorkflowConfig } from './dsl/types.js'
 
@@ -84,6 +85,8 @@ const verdictText = (verdict: string): string => VERDICT_TEXT[verdict] ?? verdic
 
 /** Render one run's state progression as text. */
 function renderRun(state: RunState): string {
+  // Field mapping rides the shared projection (P2-1); the text is unchanged.
+  const dto = runJsonDto(state)
   const lines = [
     `运行 ${state.id}`,
     `workflow: ${state.workflowName} (${state.configFile})`,
@@ -92,12 +95,12 @@ function renderRun(state: RunState): string {
     `开始: ${state.startedAt}${state.finishedAt ? ` · 结束: ${state.finishedAt}` : ''}`,
   ]
   if (state.error) lines.push(`错误: ${state.error}`)
-  for (const outcome of state.stateOutcomes) {
+  for (const outcome of dto.states) {
     lines.push(
-      `  状态「${outcome.state}」→ ${verdictText(outcome.verdict.verdict)}${outcome.supervisorScore !== undefined ? ` [评分 ${outcome.supervisorScore}]` : ''}${outcome.verdict.rationale ? `：${truncateLine(outcome.verdict.rationale, 120)}` : ''}`,
+      `  状态「${outcome.state}」→ ${verdictText(outcome.verdict)}${outcome.supervisorScore !== null ? ` [评分 ${outcome.supervisorScore}]` : ''}${outcome.rationale ? `：${truncateLine(outcome.rationale, 120)}` : ''}`,
     )
     for (const step of outcome.steps) {
-      lines.push(`    · ${step.step}${step.agent ? ` [${step.agent}]` : ''}${step.verdict ? ` → ${verdictText(step.verdict.verdict)}` : ''}`)
+      lines.push(`    · ${step.step}${step.agent ? ` [${step.agent}]` : ''}${step.verdict ? ` → ${verdictText(step.verdict)}` : ''}`)
     }
     if (outcome.supervisorNote) lines.push(`    supervisor: ${truncateLine(outcome.supervisorNote, 200)}`)
   }
@@ -111,16 +114,17 @@ function truncateLine(text: string, budget: number): string {
 
 /** Render one run result (terminal summary). */
 function renderResult(result: RunResult): string {
+  const dto = runResultDto(result)
   const lines = [
-    `运行 ${result.runId} 结束：${result.status}${result.verdict ? ` · 最终结论 ${result.verdict}` : ''}`,
+    `运行 ${dto.runId} 结束：${dto.status}${dto.verdict ? ` · 最终结论 ${dto.verdict}` : ''}`,
   ]
-  for (const outcome of result.stateOutcomes) {
-    lines.push(`  ${outcome.state} → ${outcome.verdict.verdict}`)
+  for (const outcome of dto.states) {
+    lines.push(`  ${outcome.state} → ${outcome.verdict}`)
   }
-  if (result.failedStates.length > 0) {
-    lines.push(`⚠ 以下状态判定失败（业务未通过，即使运行已收尾）：${result.failedStates.join('、')}`)
+  if (dto.failedStates.length > 0) {
+    lines.push(`⚠ 以下状态判定失败（业务未通过，即使运行已收尾）：${dto.failedStates.join('、')}`)
   }
-  if (result.error) lines.push(`错误: ${result.error}`)
+  if (dto.error) lines.push(`错误: ${dto.error}`)
   return lines.join('\n')
 }
 

@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url'
 import { registerCommands } from './commands.js'
 import { parseWorkflowYaml } from './dsl/load.js'
 import type { WorkflowConfig } from './dsl/types.js'
+import { runResultDto, runSummaryDto } from './projections.js'
 import AceHarnessService, { type AceHarnessConfig } from './service.js'
 import { installFrameworkSkill } from './store/skill-install.js'
 import { registerTools } from './tools.js'
@@ -293,34 +294,8 @@ export function apply(ctx: Context, config: Config): void {
             title: roots[index]?.workspace ?? entry.path,
             sqliteArchive: sqliteByWorkspace[index] ?? { enabled: false, archived: 0, dbFile: null },
             runs: entry.runs.map(({ run, topology }) => ({
-              runId: run.id,
-              /** Owning session: the client gates the live popup on it. */
-              parentSessionId: run.parentSessionId ?? null,
-              workflowName: run.workflowName,
-              status: run.status,
-              currentState: run.currentState,
-              completedSteps: run.completedSteps,
-              totalSteps: run.totalSteps,
-              error: run.error,
-              startedAt: run.startedAt,
-              finishedAt: run.finishedAt,
+              ...runSummaryDto(run),
               topology,
-              states: run.stateOutcomes.map((outcome) => ({
-                state: outcome.state,
-                verdict: outcome.verdict.verdict,
-                supervisorScore: outcome.supervisorScore ?? null,
-                supervisorNote: outcome.supervisorNote ?? null,
-                steps: outcome.steps.map((step) => ({
-                  step: step.step,
-                  type: step.type,
-                  agent: step.agent,
-                  role: step.role,
-                  verdict: step.verdict?.verdict ?? null,
-                  outputSummary: step.outputSummary,
-                  data: step.data ?? null,
-                  attempts: step.attempts ?? 1,
-                })),
-              })),
             })),
             workflows: workflowsByWorkspace[index]?.workflows.map(({ entry: w, taskFields }) => ({
               fileName: w.fileName,
@@ -488,28 +463,7 @@ export function apply(ctx: Context, config: Config): void {
           }
           const result = await handle.result
           res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-          res.end(
-            JSON.stringify({
-              runId: handle.runId,
-              status: result.status,
-              verdict: result.verdict ?? null,
-              error: result.error,
-              failedStates: result.failedStates,
-              states: result.stateOutcomes.map((outcome) => ({
-                state: outcome.state,
-                verdict: outcome.verdict.verdict,
-                supervisorScore: outcome.supervisorScore ?? null,
-                steps: outcome.steps.map((step) => ({
-                  step: step.step,
-                  type: step.type,
-                  verdict: step.verdict?.verdict ?? null,
-                  outputSummary: step.outputSummary,
-                  data: step.data ?? null,
-                  attempts: step.attempts ?? 1,
-                })),
-              })),
-            }),
-          )
+          res.end(JSON.stringify(runResultDto(result)))
         } catch (error) {
           ctx.logger('ace-harness').warn(`run route failed: ${String(error)}`)
           res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })

@@ -9,39 +9,17 @@ import type { JsonValue } from '@deepseek-ai/dsh-session'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type AceHarnessService from './service.js'
 import { askMissingParameters, askMissingTaskInputs } from './params-dialog.js'
+import { runJsonDto } from './projections.js'
 import type { RunState } from './engine/types.js'
 import type { WorkflowConfig } from './dsl/types.js'
 
 /**
  * Canonical JSON run projection shared by all tools. Every field must be
  * lossless JSON: optional values are null-coalesced because the tool output
- * contract rejects `undefined`.
+ * contract rejects `undefined`. The shape is owned by `projections.ts`.
  */
 export function runJson(state: RunState): Record<string, unknown> {
-  return {
-    runId: state.id,
-    workflowName: state.workflowName,
-    status: state.status,
-    currentState: state.currentState,
-    completedSteps: state.completedSteps,
-    totalSteps: state.totalSteps,
-    transitionCount: state.transitionCount,
-    error: state.error,
-    states: state.stateOutcomes.map((outcome) => ({
-      state: outcome.state,
-      verdict: outcome.verdict.verdict,
-      rationale: outcome.verdict.rationale,
-      supervisorNote: outcome.supervisorNote ?? null,
-      supervisorScore: outcome.supervisorScore ?? null,
-      steps: outcome.steps.map((step) => ({
-        step: step.step,
-        agent: step.agent ?? null,
-        role: step.role ?? null,
-        verdict: step.verdict?.verdict ?? null,
-        issues: step.verdict?.issues ?? [],
-      })),
-    })),
-  }
+  return runJsonDto(state)
 }
 
 /** Register the three model-facing tools on the host context. */

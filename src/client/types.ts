@@ -1,4 +1,12 @@
-/** Wire DTOs served by the host `/plugins/dsh-ace-harness/state` route. */
+/**
+ * Wire DTOs served by the host `/plugins/dsh-ace-harness/state` route.
+ *
+ * SYNC SOURCE: the host builds these shapes with the whitelist projectors in
+ * `src/projections.ts` (`runSummaryDto` / `stateOutcomeDto` / `stepOutcomeDto`).
+ * This file is the client-side manual mirror (the client bundles separately
+ * and cannot import host modules); when projections.ts changes, mirror the
+ * field set here. Optional fields are always explicit `null` on the wire.
+ */
 
 export interface StateAgentDto {
   name: string
