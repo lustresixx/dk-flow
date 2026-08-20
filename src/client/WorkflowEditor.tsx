@@ -545,6 +545,7 @@ function StepEditor(props: {
           </select>
           <textarea
             rows={4}
+            className={styles.taskArea}
             placeholder="任务描述（交给该角色 Agent 的指令）"
             value={draft.task}
             onChange={(event) => { set({ task: event.target.value }) }}
@@ -567,6 +568,7 @@ function StepEditor(props: {
           </select>
           <textarea
             rows={3}
+            className={styles.taskArea}
             placeholder="单轮任务描述（一次 LLM 调用，不启动子代理、无工具）"
             value={draft.task}
             onChange={(event) => { set({ task: event.target.value }) }}

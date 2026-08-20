@@ -329,4 +329,11 @@
   font-family: 'Cascadia Code', Consolas, 'Courier New', monospace;
   font-size: 12px;
   line-height: 1.5;
+  min-height: 240px;
+  resize: vertical;
+}
+
+.taskArea {
+  min-height: 130px;
+  resize: vertical;
 }
