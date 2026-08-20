@@ -14,6 +14,7 @@ const STATE_ROUTE = '/plugins/dsh-ace-harness/state'
 
 const ACTIVE_STATUSES = new Set(['preparing', 'running', 'waiting-human'])
 const RECENT_MS = 2 * 60_000
+const LAST_RUN_KEY = 'ace-harness:lastRun'
 
 export interface AcePanelProps {
   currentSessionId: () => string | undefined
@@ -32,7 +33,9 @@ export function AcePanel(props: AcePanelProps): JSX.Element {
   const [runId, setRunId] = useState<string | null>(null)
   void props.currentSessionId
 
-  // Discover interesting runs: active ones plus recently finished ones.
+  // Discover interesting runs: active ones plus recently finished ones. The
+  // panel is instance-global (not session-bound), re-attaches fast after a
+  // page reload, and remembers the last run across session switches.
   useEffect(() => {
     let alive = true
     const tick = async (): Promise<void> => {
@@ -51,16 +54,27 @@ export function AcePanel(props: AcePanelProps): JSX.Element {
           .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
         if (!alive) return
         setRunId((current) => {
-          if (current !== null && runs.some((run) => run.runId === current)) return current
-          const active = runs.find((run) => ACTIVE_STATUSES.has(run.status))
-          return active?.runId ?? (runs[0]?.runId ?? null)
+          const remembered = window.sessionStorage.getItem(LAST_RUN_KEY)
+          const next = (() => {
+            if (current !== null && runs.some((run) => run.runId === current)) return current
+            if (remembered !== null && runs.some((run) => run.runId === remembered)) return remembered
+            const active = runs.find((run) => ACTIVE_STATUSES.has(run.status))
+            return active?.runId ?? (runs[0]?.runId ?? null)
+          })()
+          if (next !== null && next !== current) {
+            window.sessionStorage.setItem(LAST_RUN_KEY, next)
+          }
+          if (next === null) {
+            window.sessionStorage.removeItem(LAST_RUN_KEY)
+          }
+          return next
         })
       } catch {
         // Best-effort discovery; the next tick retries.
       }
     }
     void tick()
-    const timer = window.setInterval(() => { void tick() }, 3000)
+    const timer = window.setInterval(() => { void tick() }, 1500)
     return () => {
       alive = false
       window.clearInterval(timer)
