@@ -732,6 +732,13 @@ export default class AceHarnessService extends Service {
     if (persisted.parentSessionId !== input.parent.session.id) {
       throw new Error('只有启动该运行的会话才能恢复它')
     }
+    // Fail fast on terminal runs: the engine rejects them too, but only after
+    // the job was already registered, which used to surface as a fake
+    // "resumed" whose real error vanished inside the background job.
+    const terminal: RunState['status'][] = ['completed', 'failed', 'crashed', 'stopped']
+    if (terminal.includes(persisted.status)) {
+      throw new Error(`运行 ${input.runId} 已处于终态 ${persisted.status}，无法恢复`)
+    }
     if (this.active.has(input.runId)) {
       throw new Error(`运行 ${input.runId} 正在执行中`)
     }
@@ -755,6 +762,13 @@ export default class AceHarnessService extends Service {
       () => loadRunState(workspace, input.runId, this.config.runDirName),
       {},
     )
+    // Traceable resume: mirror the 'start' audit row so a resumed run's log
+    // shows who continued it and when.
+    await appendAudit(workspace, input.runId, this.config.runDirName, {
+      at: new Date().toISOString(),
+      event: 'resume',
+      workflow: persisted.workflowName,
+    })
     const begin = this.beginRun(workspace, input.runId, options)
     if (input.mode === 'job') {
       return { runId: input.runId, ...this.detachAsJob(input.runId, input.parent, controller, begin, persisted.workflowName) }
@@ -816,6 +830,9 @@ export default class AceHarnessService extends Service {
       resolveResult = resolvePromise
       rejectResult = rejectPromise
     })
+    // Job-mode callers observe the job outcome, not this promise: keep an
+    // engine rejection from surfacing as an unhandled promise rejection.
+    result.catch(() => {})
     const jobId = jobRegistry.start({
       kind: 'ace-workflow',
       label: `ACE workflow ${workflowName}`,
@@ -827,7 +844,15 @@ export default class AceHarnessService extends Service {
           cancel: (): void => {
             controller.abort()
           },
-          done: runResult.then((settled) => jobOutcomeFor(settled)),
+          // JobHooks.done must not reject — the registry converts a rejection
+          // to a bare 'failed' and loses the engine's error message.
+          done: runResult.then(
+            (settled) => jobOutcomeFor(settled),
+            (error): JobOutcomeLike => ({
+              status: 'failed',
+              detail: error instanceof Error ? error.message : String(error),
+            }),
+          ),
         }
       },
     })
@@ -909,6 +934,7 @@ export default class AceHarnessService extends Service {
     const parent = {
       id: 'api-runner' as unknown as SessionId,
       session: { header: { cwd: input.workspace } },
+      options: {},
     } as unknown as Agent
     return this.startRun({
       parent,
@@ -1208,21 +1234,37 @@ export default class AceHarnessService extends Service {
       async runLlmStep(input) {
         const agentDef = input.agentName ? await service.agentByName(input.agentName) : undefined
         const registeredProviders = service.ctx.llm.listProviders().map((info) => info.id)
-        const provider =
-          input.parent.options.provider ??
-          (registeredProviders.includes(service.config.subagentProvider)
-            ? service.config.subagentProvider
-            : registeredProviders[0])
-        if (!provider) {
-          throw new EngineError('没有已注册的 LLM provider，无法执行 llm 步骤', 'NO_MATCH')
-        }
         const model =
-          input.model ?? (service.config.model || (input.parent.options.model ?? ''))
+          input.model ?? (service.config.model || (input.parent.options?.model ?? ''))
         if (model === '') {
           throw new EngineError(
             `llm 步骤「${input.stepName}」未指定 model，且调用方与插件配置都没有默认模型`,
             'NO_MATCH',
           )
+        }
+        let provider = input.parent.options?.provider
+        if (provider === undefined) {
+          // A caller without its own model route (REST/API synthetic parent)
+          // must land on the route that actually advertises the resolved
+          // model: a blind registration-order pick can send a pi-ai model to
+          // the deepseek-official endpoint, which rejects the name on the wire.
+          for (const candidate of registeredProviders) {
+            try {
+              const advertised = await service.ctx.llm.listModels(candidate)
+              if (advertised.some((entry) => entry.id === model)) {
+                provider = candidate
+                break
+              }
+            } catch {
+              // Catalog discovery is advisory; fall through to the default pick.
+            }
+          }
+        }
+        provider ??= registeredProviders.includes(service.config.subagentProvider)
+          ? service.config.subagentProvider
+          : registeredProviders[0]
+        if (!provider) {
+          throw new EngineError('没有已注册的 LLM provider，无法执行 llm 步骤', 'NO_MATCH')
         }
         const promptText = buildStepPrompt({
           role: input.role,
@@ -1275,7 +1317,7 @@ export default class AceHarnessService extends Service {
               messages: [userMessage],
               system: agentDef?.systemPrompt,
               temperature: agentDef?.temperature,
-              maxTokens: input.parent.options.maxTokens,
+              maxTokens: input.parent.options?.maxTokens,
               signal: stepSignal.signal,
             })) {
               if (chunk.type === 'text-delta') {
