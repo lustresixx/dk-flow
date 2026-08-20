@@ -31,8 +31,8 @@ export interface ScriptNodeResult {
   data?: unknown
 }
 
-/** Wall-clock cap for one script step. */
-const SCRIPT_TIMEOUT_MS = 10_000
+/** Wall-clock cap for one inline script step (vm timeout, best effort). */
+export const SCRIPT_TIMEOUT_MS = 10_000
 /** Cap on the combined output text. */
 const OUTPUT_BUDGET = 20_000
 /** Cap on the serialized structured payload; data must survive this budget. */
@@ -84,13 +84,56 @@ function cloneJsonSafe(value: unknown): { ok: true; data: unknown } | { ok: fals
 }
 
 /**
- * Run one script step and interpret its return value:
+ * Interpret a script's returned value under the strict contract:
  * - `{ output, success, data? }` — success decides the binary verdict, and
  *   `data` rides to downstream steps as structured evidence;
- * - `{ error }` or a thrown exception — failed step with the message;
+ * - `{ error }` — failed step with the message;
  * - anything else — the step fails with a diagnostic naming the contract.
+ * Shared by the inline vm runner and the Python subprocess runner.
  */
-export function runScriptNode(source: string, input: ScriptNodeInput): ScriptNodeResult {
+export function interpretScriptResult(value: unknown): ScriptNodeResult {
+  const fail = (message: string): ScriptNodeResult => ({
+    output: truncate(message),
+    success: false,
+    error: message,
+  })
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return fail(
+      `脚本必须返回对象 { output: "...", success: true/false }（或 { error: "..." } 表示失败），实际返回: ${describeValue(value)}`,
+    )
+  }
+  const record = value as Record<string, unknown>
+  if (record.error !== undefined) {
+    const message = typeof record.error === 'string' ? record.error : String(record.error)
+    return { output: truncate(message), success: false, error: message }
+  }
+  if (typeof record.output !== 'string') {
+    return fail('脚本返回对象缺少字符串字段 output，应返回 { output: "...", success: true }')
+  }
+  if (typeof record.success !== 'boolean') {
+    return fail('脚本返回对象缺少布尔字段 success，应返回 { output: "...", success: true }')
+  }
+  let data: unknown
+  if (record.data !== undefined) {
+    const cloned = cloneJsonSafe(record.data)
+    if (!cloned.ok) return fail(`脚本返回的 data 不合法: ${cloned.reason}`)
+    data = cloned.data
+  }
+  const result: ScriptNodeResult = { output: truncate(record.output), success: record.success }
+  if (data !== undefined) result.data = data
+  return result
+}
+
+/**
+ * Run one inline JavaScript script step in a vm sandbox and interpret its
+ * return value under the strict script contract.
+ * @param options.timeoutMs - wall-clock cap for the vm call (best effort).
+ */
+export function runScriptNode(
+  source: string,
+  input: ScriptNodeInput,
+  options: { timeoutMs?: number } = {},
+): ScriptNodeResult {
   const logs: string[] = []
   const context = Object.freeze({
     requirements: input.requirements,
@@ -123,44 +166,15 @@ export function runScriptNode(source: string, input: ScriptNodeInput): ScriptNod
   let value: unknown
   try {
     const wrapped = `(function () { "use strict";\n${source}\n})()`
-    value = vm.runInContext(wrapped, vmContext, { timeout: SCRIPT_TIMEOUT_MS })
+    value = vm.runInContext(wrapped, vmContext, { timeout: options.timeoutMs ?? SCRIPT_TIMEOUT_MS })
   } catch (error) {
     const message = (error as Error).message
     const output = logs.length > 0 ? `${logs.join('\n')}\n脚本执行失败: ${message}` : `脚本执行失败: ${message}`
     return { output: truncate(output), success: false, error: message }
   }
-
-  const fail = (message: string): ScriptNodeResult => ({
-    output: truncate(message),
-    success: false,
-    error: message,
-  })
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    return fail(
-      `脚本必须返回对象 { output: "...", success: true/false }（或 { error: "..." } 表示失败），实际返回: ${describeValue(value)}`,
-    )
+  const result = interpretScriptResult(value)
+  if (logs.length > 0) {
+    result.output = truncate(`${result.output}\n--- 日志 ---\n${logs.join('\n')}`)
   }
-  const record = value as Record<string, unknown>
-  if (record.error !== undefined) {
-    const message = typeof record.error === 'string' ? record.error : String(record.error)
-    return { output: truncate(message), success: false, error: message }
-  }
-  if (typeof record.output !== 'string') {
-    return fail('脚本返回对象缺少字符串字段 output，应返回 { output: "...", success: true }')
-  }
-  if (typeof record.success !== 'boolean') {
-    return fail('脚本返回对象缺少布尔字段 success，应返回 { output: "...", success: true }')
-  }
-  let data: unknown
-  if (record.data !== undefined) {
-    const cloned = cloneJsonSafe(record.data)
-    if (!cloned.ok) return fail(`脚本返回的 data 不合法: ${cloned.reason}`)
-    data = cloned.data
-  }
-  const combined = [record.output, ...(logs.length > 0 ? ['--- 日志 ---', logs.join('\n')] : [])]
-    .filter((section) => section !== '')
-    .join('\n')
-  const result: ScriptNodeResult = { output: truncate(combined), success: record.success }
-  if (data !== undefined) result.data = data
   return result
 }

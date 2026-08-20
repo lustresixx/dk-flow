@@ -82,6 +82,20 @@ export interface StepConcurrency {
   joinPolicy?: JoinPolicy
 }
 
+/**
+ * Transient-failure retry policy for one step. Retries apply to execution
+ * errors of agent/llm/subworkflow steps (LLM call failures, timeouts,
+ * subworkflow crashes) — a normal `fail` verdict is a transition signal and
+ * is never retried, and script steps settle deterministically, so they are
+ * not retried either.
+ */
+export interface StepRetryPolicy {
+  /** Extra attempts after the first (0 disables retries). */
+  maxRetries: number
+  /** Base backoff in ms; doubles per attempt. Defaults to 2000. */
+  backoffMs?: number
+}
+
 export interface Issue {
   id?: string
   type: IssueType
@@ -154,8 +168,18 @@ export interface WorkflowStep {
   subworkflow?: Partial<SubworkflowReference>
   /** JavaScript source for `type: script` steps (node:vm, returns JSON). */
   script?: string
+  /**
+   * Workspace-relative script file for `type: script` steps, mutually
+   * exclusive with `script`. `.js/.mjs/.cjs` run in the vm sandbox; `.py`
+   * runs as a Python subprocess (context on stdin, result JSON on stdout).
+   */
+  scriptFile?: string
   /** Optional model override for `type: llm` (and agent) steps. */
   model?: string
+  /** Per-step wall-clock cap in minutes; overrides the plugin step timeout. */
+  timeoutMinutes?: number
+  /** Transient-failure retry policy; falls back to `workflow.stepRetry`. */
+  retry?: StepRetryPolicy
   inputs?: SubworkflowInputs
   result?: SubworkflowResultMapping
   runtime?: SubworkflowRuntime
@@ -217,6 +241,8 @@ export interface WorkflowDefinition {
   states: StateMachineState[]
   maxTransitions?: number
   supervisor?: WorkflowSupervisorConfig
+  /** Default retry policy for steps without their own `retry`. */
+  stepRetry?: StepRetryPolicy
 }
 
 /** Top-level `workflow.yaml` document. */

@@ -8,6 +8,7 @@
 import type { StateMachineState, StepVerdict, WorkflowConfig, WorkflowStep } from '../dsl/types.js'
 import { buildStateEvidence, buildStepEvidence, CONCLUSION_BUDGET, truncate } from './prompts.js'
 import { runScriptNode } from './script-runner.js'
+import { runScriptFile } from './script-file-runner.js'
 import {
   assertSelfTransitionBudget,
   assertTransitionBudget,
@@ -61,6 +62,60 @@ export function createRunState(options: {
 
 function stepKey(state: string, step: string): string {
   return `${state}/${step}`
+}
+
+/** Per-step timeout override in ms, from `timeoutMinutes` when declared. */
+function stepTimeoutMs(step: WorkflowStep): number | undefined {
+  return step.timeoutMinutes !== undefined ? step.timeoutMinutes * 60_000 : undefined
+}
+
+/** Resolve the effective retry policy for one step. */
+function resolveStepRetry(
+  step: WorkflowStep,
+  workflow: WorkflowConfig['workflow'],
+): { maxRetries: number; backoffMs: number } {
+  const policy = step.retry ?? workflow.stepRetry
+  return { maxRetries: policy?.maxRetries ?? 0, backoffMs: policy?.backoffMs ?? 2000 }
+}
+
+/** Abort-aware sleep used between retry attempts. */
+function sleepAbortable(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolvePromise, rejectPromise) => {
+    if (signal.aborted) {
+      rejectPromise(new Error('运行被取消'))
+      return
+    }
+    const onAbort = (): void => {
+      clearTimeout(timer)
+      rejectPromise(new Error('运行被取消'))
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolvePromise()
+    }, ms)
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+/**
+ * Retry a transient-failure function with exponential backoff. A settled
+ * value (including a `fail` verdict) is never retried — only thrown errors.
+ */
+async function retryOnError<T>(
+  run: () => Promise<T>,
+  policy: { maxRetries: number; backoffMs: number },
+  signal: AbortSignal,
+): Promise<{ value: T; attempts: number }> {
+  let attempts = 0
+  for (;;) {
+    attempts += 1
+    try {
+      return { value: await run(), attempts }
+    } catch (error) {
+      if (signal.aborted || attempts > policy.maxRetries) throw error
+      await sleepAbortable(policy.backoffMs * 2 ** (attempts - 1), signal)
+    }
+  }
 }
 
 /**
@@ -327,14 +382,24 @@ async function executeState(
       const role = step.type === 'script' ? 'neutral' : (step.role ?? inferRole(step, machineState))
       let outcome: StepOutcome
       if (step.type === 'script') {
-        const scriptResult = runScriptNode(step.script ?? '', {
+        const scriptInput = {
           requirements: runState.context.requirements || runState.inputs.requirements || '',
           state: machineState.name,
           priorStepEvidence: buildStepEvidence(completedSteps),
           priorStateEvidence: buildStateEvidence(runState.stateOutcomes),
           inputs: runState.inputs,
           stepData: buildStepData(runState.stateOutcomes, completedSteps),
-        })
+        }
+        const timeoutMs = stepTimeoutMs(step)
+        const scriptResult =
+          step.scriptFile?.trim() !== undefined && step.scriptFile.trim() !== ''
+            ? await runScriptFile(step.scriptFile.trim(), scriptInput, {
+                projectRoot: runState.context.projectRoot,
+                pythonCommand: options.pythonCommand ?? 'python',
+                timeoutMs,
+                signal: options.signal,
+              })
+            : runScriptNode(step.script ?? '', scriptInput, { timeoutMs })
         outcome = {
           key,
           state: machineState.name,
@@ -359,17 +424,23 @@ async function executeState(
           priorStepEvidence: buildStepEvidence(completedSteps),
           stepData: buildStepData(runState.stateOutcomes, completedSteps),
         }
-        const result = await executor.runLlmStep({
-          stepName: step.name,
-          role,
-          task: step.task ?? '',
-          agentName: step.agent,
-          constraints: step.constraints ?? [],
-          model: step.model,
-          ctx: stepContext,
-          parent: options.parent,
-          signal: options.signal,
-        })
+        const { value: result, attempts } = await retryOnError(
+          () =>
+            executor.runLlmStep({
+              stepName: step.name,
+              role,
+              task: step.task ?? '',
+              agentName: step.agent,
+              constraints: step.constraints ?? [],
+              model: step.model,
+              ctx: stepContext,
+              parent: options.parent,
+              signal: options.signal,
+              timeoutMs: stepTimeoutMs(step),
+            }),
+          resolveStepRetry(step, options.config.workflow),
+          options.signal,
+        )
         outcome = {
           key,
           state: machineState.name,
@@ -379,19 +450,25 @@ async function executeState(
           role,
           outputSummary: result.outputSummary,
           verdict: result.verdict,
+          attempts,
           startedAt: now(),
           finishedAt: now(),
         }
       } else if (step.type === 'subworkflow') {
         const configFile = step.workflow?.trim() || step.subworkflow?.configFile?.trim()
         if (!configFile) throw new EngineError(`子工作流步骤「${step.name}」缺少配置`, 'NO_MATCH')
-        const child = await executor.runSubworkflowStep({
-          stepName: step.name,
-          configFile,
-          parent: options.parent,
-          signal: options.signal,
-          inheritedRequirements: runState.context.requirements ?? '',
-        })
+        const { value: child, attempts } = await retryOnError(
+          () =>
+            executor.runSubworkflowStep({
+              stepName: step.name,
+              configFile,
+              parent: options.parent,
+              signal: options.signal,
+              inheritedRequirements: runState.context.requirements ?? '',
+            }),
+          resolveStepRetry(step, options.config.workflow),
+          options.signal,
+        )
         outcome = {
           key,
           state: machineState.name,
@@ -402,6 +479,7 @@ async function executeState(
           outputSummary: child.verdict?.rationale ?? `子工作流结束：${child.outcome}`,
           verdict: child.verdict,
           subworkflowOutcome: child.outcome,
+          attempts,
           startedAt: now(),
           finishedAt: now(),
         }
@@ -416,19 +494,25 @@ async function executeState(
           role === 'attacker' || role === 'judge'
             ? evidenceFor(completedSteps, machineState.name)
             : undefined
-        const result = await executor.runAgentStep({
-          stepName: step.name,
-          agentName,
-          agentSystemPrompt: '',
-          role,
-          task: step.task ?? '',
-          constraints: step.constraints ?? [],
-          preCommands: step.preCommands ?? [],
-          ctx: stepContext,
-          evidence,
-          parent: options.parent,
-          signal: options.signal,
-        })
+        const { value: result, attempts } = await retryOnError(
+          () =>
+            executor.runAgentStep({
+              stepName: step.name,
+              agentName,
+              agentSystemPrompt: '',
+              role,
+              task: step.task ?? '',
+              constraints: step.constraints ?? [],
+              preCommands: step.preCommands ?? [],
+              ctx: stepContext,
+              evidence,
+              parent: options.parent,
+              signal: options.signal,
+              timeoutMs: stepTimeoutMs(step),
+            }),
+          resolveStepRetry(step, options.config.workflow),
+          options.signal,
+        )
         outcome = {
           key,
           state: machineState.name,
@@ -438,6 +522,7 @@ async function executeState(
           role,
           outputSummary: result.outputSummary,
           verdict: result.verdict,
+          attempts,
           startedAt: now(),
           finishedAt: now(),
         }

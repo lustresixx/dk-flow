@@ -484,7 +484,11 @@ function StateInspector(props: {
               type: 'agent',
               workflowRef: '',
               script: '// context.requirements 为运行输入，context.priorStepEvidence 为前序产出，context.stepData 为上游结构化数据\n// 必须返回 { output: "...", success: true/false }，可选附带 data（任意 JSON）\nreturn { output: "完成", success: true }',
+              scriptFile: '',
               model: '',
+              timeoutMinutes: '',
+              maxRetries: '',
+              backoffMs: '',
               parallelGroup: '',
             },
           ])
@@ -575,14 +579,24 @@ function StepEditor(props: {
           />
         </>
       ) : draft.type === 'script' ? (
-        <textarea
-          rows={7}
-          className={styles.scriptArea}
-          spellCheck={false}
-          placeholder={'// JavaScript：可用 context.requirements / context.inputs / context.priorStepEvidence / context.stepData\n// 必须返回 { output: "结果文本", success: true }，可选附带 data（任意 JSON）传给下游\nreturn { output: "结果文本", success: true }'}
-          value={draft.script}
-          onChange={(event) => { set({ script: event.target.value }) }}
-        />
+        <>
+          <input
+            type="text"
+            placeholder="scriptFile：导入脚本文件（可选，与内联脚本二选一；.js 进沙箱，.py 用 Python 运行）"
+            value={draft.scriptFile}
+            onChange={(event) => { set({ scriptFile: event.target.value }) }}
+          />
+          {draft.scriptFile.trim() === '' ? (
+            <textarea
+              rows={7}
+              className={styles.scriptArea}
+              spellCheck={false}
+              placeholder={'// JavaScript：可用 context.requirements / context.inputs / context.priorStepEvidence / context.stepData\n// 必须返回 { output: "结果文本", success: true }，可选附带 data（任意 JSON）传给下游\nreturn { output: "结果文本", success: true }'}
+              value={draft.script}
+              onChange={(event) => { set({ script: event.target.value }) }}
+            />
+          ) : null}
+        </>
       ) : (
         <input
           type="text"
@@ -597,6 +611,28 @@ function StepEditor(props: {
           placeholder="parallelGroup（留空为串行）"
           value={draft.parallelGroup}
           onChange={(event) => { set({ parallelGroup: event.target.value }) }}
+        />
+        <input
+          type="number"
+          min={1}
+          placeholder="超时（分钟，可选）"
+          value={draft.timeoutMinutes}
+          onChange={(event) => { set({ timeoutMinutes: event.target.value }) }}
+        />
+        <input
+          type="number"
+          min={0}
+          max={10}
+          placeholder="maxRetries（0=不重试）"
+          value={draft.maxRetries}
+          onChange={(event) => { set({ maxRetries: event.target.value }) }}
+        />
+        <input
+          type="number"
+          min={0}
+          placeholder="退避 ms（可选）"
+          value={draft.backoffMs}
+          onChange={(event) => { set({ backoffMs: event.target.value }) }}
         />
         <button type="button" onClick={props.onMoveUp}>↑</button>
         <button type="button" className={styles.stepRemove} onClick={props.onRemove}>×</button>

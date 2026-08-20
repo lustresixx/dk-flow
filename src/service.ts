@@ -63,6 +63,8 @@ export interface AceHarnessConfig {
   preCommandTimeoutMs?: number
   /** Per AI step timeout in milliseconds (default 1800000 = 30 min). */
   stepTimeoutMs?: number
+  /** Command used to launch Python for `.py` scriptFile steps (default `python`). */
+  pythonCommand?: string
 }
 
 /** Verdict JSON schema enforced on judge steps when the provider supports it. */
@@ -267,6 +269,7 @@ export default class AceHarnessService extends Service {
       maxConcurrentRuns: config.maxConcurrentRuns ?? 4,
       preCommandTimeoutMs: config.preCommandTimeoutMs ?? 300_000,
       stepTimeoutMs: config.stepTimeoutMs ?? 1_800_000,
+      pythonCommand: config.pythonCommand ?? 'python',
     }
     this.catalogReady = this.loadCatalog()
   }
@@ -747,6 +750,7 @@ export default class AceHarnessService extends Service {
       executor,
       persist,
       load,
+      pythonCommand: this.config.pythonCommand,
       resolveSubworkflow: async (configFile: string) => {
         const resolved = await this.resolveWorkflowConfig(workspace, configFile)
         if (!resolved) throw new EngineError(`子工作流「${configFile}」不存在`, 'NO_MATCH')
@@ -815,7 +819,10 @@ export default class AceHarnessService extends Service {
         const provider = service.config.subagentProvider
         const providerCaps = service.ctx.subagents.getProvider(provider)?.capabilities
         const wantsSchema = input.role === 'judge' && providerCaps?.outputSchema === true
-        const stepSignal = stepSignalWithTimeout(input.signal, service.config.stepTimeoutMs)
+        const stepSignal = stepSignalWithTimeout(
+          input.signal,
+          input.timeoutMs ?? service.config.stepTimeoutMs,
+        )
         const stream = service.streams.get(parentRunId)
         if (stream) {
           stream.currentState = input.ctx.state
@@ -889,7 +896,7 @@ export default class AceHarnessService extends Service {
           }
           const childResult = await raceAbort(run.result, input.signal)
           if (stepSignal.timedOut()) {
-            throw new Error(`步骤「${input.stepName}」执行超时（${service.config.stepTimeoutMs}ms）`)
+            throw new Error(`步骤「${input.stepName}」执行超时（${input.timeoutMs ?? service.config.stepTimeoutMs}ms）`)
           }
           const outputText = toText(childResult.output)
           const verdict =
@@ -951,7 +958,10 @@ export default class AceHarnessService extends Service {
           constraints: input.constraints,
           ctx: input.ctx,
         })
-        const stepSignal = stepSignalWithTimeout(input.signal, service.config.stepTimeoutMs)
+        const stepSignal = stepSignalWithTimeout(
+          input.signal,
+          input.timeoutMs ?? service.config.stepTimeoutMs,
+        )
         const stream = service.streams.get(parentRunId)
         if (stream) {
           stream.currentState = input.ctx.state
@@ -1015,7 +1025,7 @@ export default class AceHarnessService extends Service {
           })()
           const outputText = await raceAbort(collect, input.signal)
           if (stepSignal.timedOut()) {
-            throw new Error(`步骤「${input.stepName}」执行超时（${service.config.stepTimeoutMs}ms）`)
+            throw new Error(`步骤「${input.stepName}」执行超时（${input.timeoutMs ?? service.config.stepTimeoutMs}ms）`)
           }
           const verdict = extractVerdict(outputText)
           const finalText = truncate(outputText.trim() || '(该步骤没有文本输出)', SUMMARY_BUDGET)

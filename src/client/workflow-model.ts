@@ -119,7 +119,11 @@ export interface StepDraft {
   type: 'agent' | 'script' | 'subworkflow' | 'llm'
   workflowRef: string
   script: string
+  scriptFile: string
   model: string
+  timeoutMinutes: string
+  maxRetries: string
+  backoffMs: string
   parallelGroup: string
 }
 
@@ -134,8 +138,27 @@ export function stepToDraft(step: WorkflowStep): StepDraft {
     type: step.type ?? 'agent',
     workflowRef: step.workflow ?? step.subworkflow?.configFile ?? '',
     script: step.script ?? '',
+    scriptFile: step.scriptFile ?? '',
     model: step.model ?? '',
+    timeoutMinutes: step.timeoutMinutes !== undefined ? String(step.timeoutMinutes) : '',
+    maxRetries: step.retry?.maxRetries !== undefined ? String(step.retry.maxRetries) : '',
+    backoffMs: step.retry?.backoffMs !== undefined ? String(step.retry.backoffMs) : '',
     parallelGroup: step.parallelGroup ?? '',
+  }
+}
+
+/** Parse the optional numeric draft fields into step limits. */
+function draftLimits(draft: StepDraft): Pick<WorkflowStep, 'timeoutMinutes' | 'retry'> {
+  return {
+    timeoutMinutes:
+      draft.timeoutMinutes.trim() === '' ? undefined : Number.parseInt(draft.timeoutMinutes, 10),
+    retry:
+      draft.maxRetries.trim() === ''
+        ? undefined
+        : {
+            maxRetries: Number.parseInt(draft.maxRetries, 10),
+            ...(draft.backoffMs.trim() !== '' ? { backoffMs: Number.parseInt(draft.backoffMs, 10) } : {}),
+          },
   }
 }
 
@@ -147,6 +170,7 @@ export function draftToStep(draft: StepDraft): WorkflowStep {
       type: 'subworkflow',
       workflow: draft.workflowRef,
       role: draft.role === '' ? undefined : draft.role,
+      ...draftLimits(draft),
       parallelGroup: draft.parallelGroup === '' ? undefined : draft.parallelGroup,
     }
   }
@@ -154,7 +178,8 @@ export function draftToStep(draft: StepDraft): WorkflowStep {
     return {
       name: draft.name,
       type: 'script',
-      script: draft.script,
+      ...(draft.scriptFile.trim() !== '' ? { scriptFile: draft.scriptFile.trim() } : { script: draft.script }),
+      ...draftLimits(draft),
       parallelGroup: draft.parallelGroup === '' ? undefined : draft.parallelGroup,
     }
   }
@@ -166,6 +191,7 @@ export function draftToStep(draft: StepDraft): WorkflowStep {
       task: draft.task,
       role: draft.role === '' ? undefined : draft.role,
       model: draft.model === '' ? undefined : draft.model,
+      ...draftLimits(draft),
       parallelGroup: draft.parallelGroup === '' ? undefined : draft.parallelGroup,
     }
   }
@@ -175,6 +201,7 @@ export function draftToStep(draft: StepDraft): WorkflowStep {
     task: draft.task,
     role: draft.role === '' ? undefined : draft.role,
     model: draft.model === '' ? undefined : draft.model,
+    ...draftLimits(draft),
     parallelGroup: draft.parallelGroup === '' ? undefined : draft.parallelGroup,
   }
 }

@@ -113,6 +113,11 @@ export const subworkflowReferenceSchema = z.object({
   runtime: subworkflowRuntimeSchema,
 })
 
+export const stepRetrySchema = z.object({
+  maxRetries: z.number().int().min(0).max(10),
+  backoffMs: z.number().int().min(0).max(60_000).optional(),
+})
+
 export const workflowStepSchema = z.object({
   id: z.string().min(1).optional(),
   name: z.string().min(1, '步骤名称不能为空'),
@@ -123,7 +128,10 @@ export const workflowStepSchema = z.object({
   workflow: z.string().optional(),
   subworkflow: subworkflowReferenceSchema.partial().optional(),
   script: z.string().optional(),
+  scriptFile: z.string().min(1).optional(),
   model: z.string().optional(),
+  timeoutMinutes: z.number().int().min(1).max(1440).optional(),
+  retry: stepRetrySchema.optional(),
   inputs: subworkflowInputsSchema.optional(),
   result: subworkflowResultMappingSchema.optional(),
   runtime: subworkflowRuntimeSchema.optional(),
@@ -145,11 +153,21 @@ export const workflowStepSchema = z.object({
     return
   }
   if (step.type === 'script') {
-    if (!step.script?.trim()) {
+    const inline = step.script?.trim()
+    const file = step.scriptFile?.trim()
+    if (inline && file) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['script'],
-        message: '脚本步骤必须设置 script',
+        message: 'script 与 scriptFile 不能同时设置（二选一）',
+      })
+      return
+    }
+    if (!inline && !file) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['script'],
+        message: '脚本步骤必须设置 script 或 scriptFile',
       })
     }
     return
@@ -225,6 +243,7 @@ export const workflowDefinitionSchema = z.object({
   states: z.array(stateMachineStateSchema).min(1, '至少需要一个状态'),
   maxTransitions: z.number().min(1).max(100).default(50),
   supervisor: workflowSupervisorConfigSchema,
+  stepRetry: stepRetrySchema.optional(),
 })
 
 export const workflowConfigSchema = z.object({

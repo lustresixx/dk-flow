@@ -108,6 +108,26 @@ describe('workflow-model', () => {
     expect(restored.agent).toBeUndefined()
   })
 
+  it('round-trips scriptFile, timeoutMinutes, and retry through drafts', () => {
+    const step = {
+      name: 'py',
+      type: 'script',
+      scriptFile: 'scripts/analyze.py',
+      timeoutMinutes: 5,
+      retry: { maxRetries: 2, backoffMs: 500 },
+    } as const
+    const draft = stepToDraft(step)
+    expect(draft).toMatchObject({ scriptFile: 'scripts/analyze.py', timeoutMinutes: '5', maxRetries: '2', backoffMs: '500' })
+    const restored = draftToStep(draft)
+    expect(restored).toMatchObject({
+      type: 'script',
+      scriptFile: 'scripts/analyze.py',
+      timeoutMinutes: 5,
+      retry: { maxRetries: 2, backoffMs: 500 },
+    })
+    expect(restored.script).toBeUndefined()
+  })
+
   it('creates new states placed after existing nodes and replaces steps in order', () => {
     const { nodes } = configToGraph(config)
     const state = newState(nodes, '新状态')

@@ -456,6 +456,9 @@ function RunDetail(props: {
                     <span className={styles.stepAgent}>{STEP_TEXT[step.type] ?? step.type}</span>
                   )}
                   {step.role ? <span className={styles.stepRole}>{step.role}</span> : null}
+                  {step.attempts > 1 ? (
+                    <span className={styles.stepRole} title="重试次数">重试 {step.attempts - 1} 次</span>
+                  ) : null}
                   {step.verdict ? (
                     <span className={styles.verdictBadge} data-verdict={step.verdict}>
                       {VERDICT_TEXT[step.verdict] ?? step.verdict}

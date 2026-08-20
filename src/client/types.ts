@@ -62,6 +62,7 @@ export interface StateRunDto {
       verdict: string | null
       outputSummary: string
       data: unknown | null
+      attempts: number
     }[]
   }[]
 }

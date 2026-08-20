@@ -138,6 +138,44 @@ async function run(config: WorkflowConfig, script: Record<string, StepVerdict | 
   return { result, calls, persisted: persistedStates }
 }
 
+/** Run one config with a custom executor; returns the terminal result. */
+function runWith(
+  config: WorkflowConfig,
+  executor: StepExecutor,
+  controller: AbortController = new AbortController(),
+): Promise<Awaited<ReturnType<typeof runStateMachine>>> {
+  const options: EngineRunOptions = {
+    config,
+    runId: `run-${Math.random().toString(36).slice(2, 8)}`,
+    configFile: 'x.yaml',
+    inputs: {},
+    parent: fakeParent,
+    signal: controller.signal,
+    executor,
+    persist: async () => {},
+    load: async () => null,
+    resolveSubworkflow: async () => config,
+    askHumanTransition: async ({ candidates }) => candidates[0] ?? '',
+  }
+  return runStateMachine(options)
+}
+
+function singleStepConfig(
+  step: WorkflowConfig['workflow']['states'][number]['steps'][number],
+  workflow: Partial<WorkflowConfig['workflow']> = {},
+): WorkflowConfig {
+  return {
+    workflow: {
+      name: '单步',
+      mode: 'state-machine',
+      states: [
+        { name: '主', steps: [step], transitions: [], isInitial: true, isFinal: true },
+      ],
+      ...workflow,
+    },
+  }
+}
+
 describe('runStateMachine', () => {
   it('walks the happy path to completion', async () => {
     const { result, calls } = await run(redBlueConfig(), {
@@ -865,5 +903,195 @@ describe('runStateMachine', () => {
     expect(scriptStep.outputSummary).toBe('answer=42')
     // The AI step received the structured payload under its `<state>/<step>` key.
     expect(captured[0]!['计算/产出']).toEqual({ answer: 42 })
+  })
+
+  it('retries transient step errors with backoff and records attempts', async () => {
+    const config = singleStepConfig(
+      { name: 'AI', agent: 'researcher', role: 'defender', task: '分析', retry: { maxRetries: 2, backoffMs: 1 } },
+    )
+    let calls = 0
+    const executor: StepExecutor = {
+      async runAgentStep() {
+        calls += 1
+        if (calls < 3) throw new Error(`瞬时失败 ${calls}`)
+        return { outputSummary: '第三次成功', verdict: V('pass') }
+      },
+      async runLlmStep() {
+        throw new Error('不应调用 LLM 步骤')
+      },
+      async runSubworkflowStep() {
+        throw new Error('不应调用子工作流')
+      },
+    }
+    const result = await runWith(config, executor)
+    expect(result.status).toBe('completed')
+    expect(calls).toBe(3)
+    expect(result.stateOutcomes[0]!.steps[0]!.attempts).toBe(3)
+  })
+
+  it('applies the workflow-level stepRetry default', async () => {
+    const config = singleStepConfig(
+      { name: 'AI', agent: 'researcher', role: 'defender', task: '分析' },
+      { stepRetry: { maxRetries: 1, backoffMs: 1 } },
+    )
+    let calls = 0
+    const executor: StepExecutor = {
+      async runAgentStep() {
+        calls += 1
+        if (calls === 1) throw new Error('第一次失败')
+        return { outputSummary: '成功', verdict: V('pass') }
+      },
+      async runLlmStep() {
+        throw new Error('不应调用 LLM 步骤')
+      },
+      async runSubworkflowStep() {
+        throw new Error('不应调用子工作流')
+      },
+    }
+    const result = await runWith(config, executor)
+    expect(result.status).toBe('completed')
+    expect(calls).toBe(2)
+  })
+
+  it('does not retry a fail verdict', async () => {
+    const config = singleStepConfig(
+      { name: 'AI', agent: 'code-judge', role: 'judge', task: '裁决', retry: { maxRetries: 3, backoffMs: 1 } },
+    )
+    let calls = 0
+    const executor: StepExecutor = {
+      async runAgentStep() {
+        calls += 1
+        return { outputSummary: '裁决失败', verdict: V('fail') }
+      },
+      async runLlmStep() {
+        throw new Error('不应调用 LLM 步骤')
+      },
+      async runSubworkflowStep() {
+        throw new Error('不应调用子工作流')
+      },
+    }
+    const result = await runWith(config, executor)
+    expect(result.status).toBe('completed')
+    expect(calls).toBe(1)
+    expect(result.stateOutcomes[0]!.verdict.verdict).toBe('fail')
+  })
+
+  it('fails the run after retries are exhausted', async () => {
+    const config = singleStepConfig(
+      { name: 'AI', agent: 'researcher', role: 'defender', task: '分析', retry: { maxRetries: 1, backoffMs: 1 } },
+    )
+    const executor: StepExecutor = {
+      async runAgentStep() {
+        throw new Error('一直失败')
+      },
+      async runLlmStep() {
+        throw new Error('不应调用 LLM 步骤')
+      },
+      async runSubworkflowStep() {
+        throw new Error('不应调用子工作流')
+      },
+    }
+    const result = await runWith(config, executor)
+    expect(result.status).toBe('failed')
+    expect(result.error).toContain('一直失败')
+  })
+
+  it('threads step timeoutMinutes to the executor in ms', async () => {
+    const config = singleStepConfig(
+      { name: 'AI', agent: 'researcher', role: 'defender', task: '分析', timeoutMinutes: 5 },
+    )
+    const seen: (number | undefined)[] = []
+    const executor: StepExecutor = {
+      async runAgentStep(input) {
+        seen.push(input.timeoutMs)
+        return { outputSummary: 'ok', verdict: V('pass') }
+      },
+      async runLlmStep(input) {
+        seen.push(input.timeoutMs)
+        return { outputSummary: 'ok', verdict: V('pass') }
+      },
+      async runSubworkflowStep() {
+        return { outcome: 'completed', verdict: V('pass') }
+      },
+    }
+    const result = await runWith(config, executor)
+    expect(result.status).toBe('completed')
+    expect(seen).toEqual([300_000])
+  })
+
+  it('stops the run when aborted during a retry backoff', async () => {
+    const config = singleStepConfig(
+      { name: 'AI', agent: 'researcher', role: 'defender', task: '分析', retry: { maxRetries: 5, backoffMs: 100 } },
+    )
+    const executor: StepExecutor = {
+      async runAgentStep() {
+        throw new Error('持续失败')
+      },
+      async runLlmStep() {
+        throw new Error('不应调用 LLM 步骤')
+      },
+      async runSubworkflowStep() {
+        throw new Error('不应调用子工作流')
+      },
+    }
+    const controller = new AbortController()
+    setTimeout(() => { controller.abort() }, 50)
+    const result = await runWith(config, executor, controller)
+    expect(result.status).toBe('stopped')
+  })
+
+  it('runs a scriptFile step through the engine', async () => {
+    const { mkdtempSync, rmSync, writeFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dir = mkdtempSync(join(tmpdir(), 'ace-runner-script-'))
+    try {
+      writeFileSync(join(dir, 'check.js'), 'return { output: "checked: " + context.requirements, success: true }')
+      const config: WorkflowConfig = {
+        workflow: {
+          name: '文件脚本',
+          mode: 'state-machine',
+          states: [
+            {
+              name: '检查',
+              steps: [{ name: '导入脚本', type: 'script', scriptFile: 'check.js' }],
+              transitions: [],
+              isInitial: true,
+              isFinal: true,
+            },
+          ],
+        },
+        context: { projectRoot: dir },
+      }
+      const executor: StepExecutor = {
+        async runAgentStep() {
+          throw new Error('不应调用 Agent 步骤')
+        },
+        async runLlmStep() {
+          throw new Error('不应调用 LLM 步骤')
+        },
+        async runSubworkflowStep() {
+          throw new Error('不应调用子工作流')
+        },
+      }
+      const options: EngineRunOptions = {
+        config,
+        runId: 'run-file-script',
+        configFile: 'x.yaml',
+        inputs: { requirements: 'payload' },
+        parent: fakeParent,
+        signal: new AbortController().signal,
+        executor,
+        persist: async () => {},
+        load: async () => null,
+        resolveSubworkflow: async () => config,
+        askHumanTransition: async ({ candidates }) => candidates[0] ?? '',
+      }
+      const result = await runStateMachine(options)
+      expect(result.status).toBe('completed')
+      expect(result.stateOutcomes[0]!.steps[0]!.outputSummary).toBe('checked: payload')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

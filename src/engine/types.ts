@@ -24,6 +24,8 @@ export interface StepOutcome {
   subworkflowOutcome?: 'completed' | 'failed' | 'stopped' | 'crashed'
   /** Optional structured payload (script steps only); rides to downstream steps. */
   data?: unknown
+  /** Total execution attempts (retry policy); 1 means no retry was needed. */
+  attempts?: number
   startedAt: string
   finishedAt: string
 }
@@ -123,6 +125,8 @@ export interface StepExecutor {
     evidence?: string
     parent: Agent
     signal: AbortSignal
+    /** Per-step timeout override in ms; undefined uses the plugin default. */
+    timeoutMs?: number
   }): Promise<{ outputSummary: string; verdict?: StepVerdict }>
 
   /** Run one subworkflow step by starting the nested workflow config. */
@@ -151,6 +155,8 @@ export interface StepExecutor {
     ctx: StepContext
     parent: Agent
     signal: AbortSignal
+    /** Per-step timeout override in ms; undefined uses the plugin default. */
+    timeoutMs?: number
   }): Promise<{ outputSummary: string; verdict?: StepVerdict }>
 
   /** Supervisor checkpoint advice between states (optional, may be absent). */
@@ -180,6 +186,8 @@ export interface EngineRunOptions {
   load?: () => Promise<RunState | null>
   /** Resolve a subworkflow config by its configFile reference. */
   resolveSubworkflow: (configFile: string) => Promise<WorkflowConfig>
+  /** Command used to launch Python for `scriptFile` steps ending in `.py`. */
+  pythonCommand?: string
   /** Human decision when no transition matches. */
   askHumanTransition: (input: {
     state: string

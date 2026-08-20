@@ -116,6 +116,52 @@ workflow:
     expect(config.workflow.states[0]!.steps[0]!.model).toBe('fast-model')
     expect(validateWorkflowReferences(config, new Set())).toEqual([])
   })
+
+  it('accepts a scriptFile step and rejects script + scriptFile together', () => {
+    const withFile = `
+workflow:
+  name: x
+  mode: state-machine
+  states:
+    - name: s
+      isInitial: true
+      isFinal: true
+      steps:
+        - name: py
+          type: script
+          scriptFile: scripts/check.py
+      transitions: []
+`
+    const config = parseWorkflowYaml(withFile)
+    expect(config.workflow.states[0]!.steps[0]!.scriptFile).toBe('scripts/check.py')
+    const both = withFile.replace('scriptFile: scripts/check.py', 'script: "return 1"\n          scriptFile: scripts/check.py')
+    expect(() => parseWorkflowYaml(both)).toThrow(/不能同时设置/)
+  })
+
+  it('parses retry, timeoutMinutes, and workflow-level stepRetry', () => {
+    const yaml = `
+workflow:
+  name: x
+  mode: state-machine
+  stepRetry: { maxRetries: 2, backoffMs: 1000 }
+  states:
+    - name: s
+      isInitial: true
+      isFinal: true
+      steps:
+        - name: step
+          agent: a
+          task: t
+          timeoutMinutes: 5
+          retry: { maxRetries: 3 }
+      transitions: []
+`
+    const config = parseWorkflowYaml(yaml)
+    expect(config.workflow.stepRetry).toEqual({ maxRetries: 2, backoffMs: 1000 })
+    const step = config.workflow.states[0]!.steps[0]!
+    expect(step.timeoutMinutes).toBe(5)
+    expect(step.retry).toEqual({ maxRetries: 3 })
+  })
 })
 
 describe('validateWorkflowReferences', () => {

@@ -65,6 +65,7 @@ export const Config: z<Config> = z.object({
   maxConcurrentRuns: z.natural().min(1).default(4),
   preCommandTimeoutMs: z.natural().default(300000),
   stepTimeoutMs: z.natural().default(1800000),
+  pythonCommand: z.string().default('python'),
   promptSectionOrder: z.natural().default(118),
 })
 
@@ -99,6 +100,9 @@ export function apply(ctx: Context, config: Config): void {
     runDirName: config.runDirName,
     maxSubworkflowDepth: config.maxSubworkflowDepth,
     maxConcurrentRuns: config.maxConcurrentRuns,
+    preCommandTimeoutMs: config.preCommandTimeoutMs,
+    stepTimeoutMs: config.stepTimeoutMs,
+    pythonCommand: config.pythonCommand,
   }
   // The Service constructor registers synchronously on this plugin's fiber
   // (and unregisters when the fiber unloads), so direct construction makes
@@ -208,6 +212,7 @@ export function apply(ctx: Context, config: Config): void {
                   verdict: step.verdict?.verdict ?? null,
                   outputSummary: step.outputSummary,
                   data: step.data ?? null,
+                  attempts: step.attempts ?? 1,
                 })),
               })),
             })),
@@ -378,6 +383,7 @@ export function apply(ctx: Context, config: Config): void {
                   verdict: step.verdict?.verdict ?? null,
                   outputSummary: step.outputSummary,
                   data: step.data ?? null,
+                  attempts: step.attempts ?? 1,
                 })),
               })),
             }),
