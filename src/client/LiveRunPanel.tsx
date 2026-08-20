@@ -1,13 +1,16 @@
 /**
  * The live run sidebar: a docked panel that appears while a workflow runs,
  * showing the state-machine diagram with live verdict coloring, the current
- * step, the data-flow trail, and the streaming assistant output.
+ * node highlight, and the edges between states. The progress and current
+ * state live in an overlay chip on the canvas.
  * Run discovery happens in the launcher; this panel streams the given run.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Background,
   BackgroundVariant,
+  Handle,
+  Position,
   ReactFlow,
   type Edge,
   type Node,
@@ -27,13 +30,6 @@ const STATUS_TEXT: Record<string, string> = {
   failed: '失败',
   stopped: '已停止',
   crashed: '崩溃',
-}
-
-const VERDICT_TEXT: Record<string, string> = {
-  success: '成功',
-  pass: '成功',
-  fail: '失败',
-  conditional_pass: '有条件通过',
 }
 
 const ACTIVE_STATUSES = new Set(['preparing', 'running', 'waiting-human'])
@@ -62,12 +58,15 @@ function LiveStateNode(props: NodeProps<Node<LiveNodeData>>): JSX.Element {
       data-verdict={data.verdict ?? 'pending'}
       data-current={data.current ? 'true' : 'false'}
     >
+      <Handle type="target" position={Position.Left} className={styles.handle} />
+      {data.current ? <span className={styles.runningBadge}>执行中</span> : null}
       {data.isInitial ? <span className={styles.badge}>初始</span> : null}
       {data.isFinal ? <span className={styles.badgeFinal}>终止</span> : null}
       <span className={styles.nodeName}>{data.name}</span>
       {data.verdict ? (
-        <span className={styles.nodeVerdict}>{VERDICT_TEXT[data.verdict] ?? data.verdict}</span>
+        <span className={styles.nodeVerdict}>{data.verdict === 'success' || data.verdict === 'pass' ? '✓' : data.verdict === 'fail' ? '✗' : '?'}</span>
       ) : null}
+      <Handle type="source" position={Position.Right} className={styles.handle} />
     </div>
   )
 }
@@ -85,7 +84,6 @@ export function LiveRunPanel(props: LiveRunPanelProps): JSX.Element | null {
   const [dismissed, setDismissed] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState(false)
   const seqRef = useRef(0)
-  const textRef = useRef<HTMLPreElement | null>(null)
 
   // Stream the selected run; reset whenever the run changes or goes idle.
   useEffect(() => {
@@ -117,12 +115,6 @@ export function LiveRunPanel(props: LiveRunPanelProps): JSX.Element | null {
     }
   }, [runId, dismissed])
 
-  // Auto-scroll the streaming text area.
-  useEffect(() => {
-    const node = textRef.current
-    if (node) node.scrollTop = node.scrollHeight
-  }, [snapshot?.text])
-
   const nodes = useMemo<Node<LiveNodeData>[]>(() => {
     if (!snapshot) return []
     const verdictByState = new Map(snapshot.verdicts.map((item) => [item.state, item.verdict]))
@@ -149,9 +141,11 @@ export function LiveRunPanel(props: LiveRunPanelProps): JSX.Element | null {
         source: transition.from,
         target: transition.to,
         label: transition.label ?? transition.verdict ?? '',
-        style: { stroke: color, strokeWidth: 1.5 },
-        labelStyle: { fill: '#d1d5db', fontSize: 9 },
-        labelBgStyle: { fill: '#1f2937', fillOpacity: 0.9 },
+        style: { stroke: color, strokeWidth: 2 },
+        labelStyle: { fill: '#e5e7eb', fontSize: 10, fontWeight: 600 },
+        labelBgStyle: { fill: '#1f2937', fillOpacity: 0.95 },
+        labelBgPadding: [6, 3] as [number, number],
+        labelBgBorderRadius: 6,
       }
     })
   }, [snapshot])
@@ -199,24 +193,6 @@ export function LiveRunPanel(props: LiveRunPanelProps): JSX.Element | null {
               </ReactFlow>
             </div>
           </div>
-          {snapshot.stateOutputs.length > 0 ? (
-            <div className={styles.trail}>
-              <div className={styles.trailTitle}>数据流转（已完成的产出 → 传给下一步）</div>
-              <ol className={styles.trailList}>
-                {snapshot.stateOutputs.map((item) => (
-                  <li key={item.state} className={styles.trailItem} data-verdict={item.verdict}>
-                    <span className={styles.trailHead}>
-                      {item.state} → {VERDICT_TEXT[item.verdict] ?? item.verdict}
-                    </span>
-                    {item.output ? <span className={styles.trailOutput}>{item.output}</span> : null}
-                  </li>
-                ))}
-              </ol>
-            </div>
-          ) : null}
-          <pre ref={textRef} className={styles.streamText}>
-            {snapshot.text === '' ? '（该步骤正在执行，输出即将出现…）' : snapshot.text}
-          </pre>
         </div>
       ) : null}
     </div>

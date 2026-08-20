@@ -167,13 +167,33 @@
 
 .diagramNode[data-current='true'] {
   border-color: #7fb3ff;
-  box-shadow: 0 0 0 3px rgba(127, 179, 255, 0.25);
+  background: rgba(127, 179, 255, 0.14);
   animation: pulse 1.6s ease-in-out infinite;
 }
 
 @keyframes pulse {
-  0%, 100% { box-shadow: 0 0 0 3px rgba(127, 179, 255, 0.25); }
-  50% { box-shadow: 0 0 0 7px rgba(127, 179, 255, 0.12); }
+  0%, 100% { box-shadow: 0 0 0 3px rgba(127, 179, 255, 0.35); }
+  50% { box-shadow: 0 0 0 10px rgba(127, 179, 255, 0.14); }
+}
+
+.runningBadge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #7fb3ff;
+  color: #0b1e3d;
+  white-space: nowrap;
+}
+
+.handle {
+  width: 6px;
+  height: 6px;
+  min-width: 6px;
+  min-height: 6px;
+  background: #6b7280;
+  border: none;
+  opacity: 0;
 }
 
 .badge,
@@ -195,78 +215,13 @@
 }
 
 .nodeName {
-  font-weight: 600;
+  font-weight: 700;
+  font-size: 12px;
   white-space: nowrap;
 }
 
 .nodeVerdict {
-  font-size: 9px;
-  opacity: 0.85;
-}
-
-.streamText {
-  margin: 0;
-  padding: 8px 10px;
-  max-height: 180px;
-  overflow-y: auto;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
-  background: rgba(0, 0, 0, 0.3);
-  color: #c6c6da;
-  font-size: 12px;
-  line-height: 1.55;
-  white-space: pre-wrap;
-  word-break: break-all;
-  font-family: 'Cascadia Code', Consolas, 'Courier New', monospace;
-}
-
-.trail {
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
-  background: rgba(0, 0, 0, 0.18);
-  padding: 6px 8px;
-  max-height: 120px;
-  overflow-y: auto;
-}
-
-.trailTitle {
-  font-size: 10px;
-  color: #9a9ab0;
-  margin-bottom: 4px;
-}
-
-.trailList {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.trailItem {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
   font-size: 11px;
-}
-
-.trailHead {
-  font-weight: 600;
-  color: #c6c6da;
-}
-
-.trailItem[data-verdict='success'] .trailHead,
-.trailItem[data-verdict='pass'] .trailHead {
-  color: #7dd97d;
-}
-
-.trailItem[data-verdict='fail'] .trailHead {
-  color: #ff9d9d;
-}
-
-.trailOutput {
-  color: #9a9ab0;
-  white-space: pre-wrap;
-  word-break: break-all;
+  font-weight: 700;
+  opacity: 0.9;
 }
