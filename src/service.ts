@@ -60,6 +60,8 @@ export interface AceHarnessConfig {
   maxConcurrentRuns?: number
   /** Per pre-command timeout in milliseconds (default 300000). */
   preCommandTimeoutMs?: number
+  /** Per AI step timeout in milliseconds (default 1800000 = 30 min). */
+  stepTimeoutMs?: number
 }
 
 /** Verdict JSON schema enforced on judge steps when the provider supports it. */
@@ -219,6 +221,7 @@ export default class AceHarnessService extends Service {
       maxSubworkflowDepth: config.maxSubworkflowDepth ?? 8,
       maxConcurrentRuns: config.maxConcurrentRuns ?? 4,
       preCommandTimeoutMs: config.preCommandTimeoutMs ?? 300_000,
+      stepTimeoutMs: config.stepTimeoutMs ?? 1_800_000,
     }
     this.catalogReady = this.loadCatalog()
   }
@@ -643,11 +646,12 @@ export default class AceHarnessService extends Service {
         const provider = service.config.subagentProvider
         const providerCaps = service.ctx.subagents.getProvider(provider)?.capabilities
         const wantsSchema = input.role === 'judge' && providerCaps?.outputSchema === true
+        const stepSignal = stepSignalWithTimeout(input.signal, service.config.stepTimeoutMs)
         const request: SubagentStartRequest = {
           label: `${input.ctx.state}/${input.stepName}`,
           prompt: [{ type: 'text', text: promptText }],
           parent: input.parent,
-          signal: input.signal,
+          signal: stepSignal.signal,
           agentOptions: service.config.model ? { model: service.config.model } : undefined,
           outputSchema: wantsSchema ? VERDICT_OUTPUT_SCHEMA : undefined,
           toolFilter:
@@ -661,9 +665,13 @@ export default class AceHarnessService extends Service {
           step: input.stepName,
           role: input.role,
         })
-        const run = await service.ctx.subagents.start(provider, request)
+        let run: Awaited<ReturnType<typeof service.ctx.subagents.start>> | undefined
         try {
+          run = await service.ctx.subagents.start(provider, request)
           const childResult = await run.result
+          if (stepSignal.timedOut()) {
+            throw new Error(`步骤「${input.stepName}」执行超时（${service.config.stepTimeoutMs}ms）`)
+          }
           const outputText = toText(childResult.output)
           const verdict =
             childResult.structured !== undefined
@@ -680,7 +688,8 @@ export default class AceHarnessService extends Service {
             verdict,
           }
         } finally {
-          run.dispose()
+          stepSignal.dispose()
+          run?.dispose()
         }
       },
       async runSubworkflowStep(input) {
@@ -730,16 +739,21 @@ export default class AceHarnessService extends Service {
           })
         const providerCaps = service.ctx.subagents.getProvider(service.config.subagentProvider)?.capabilities
         const wantsSchema = providerCaps?.outputSchema === true
-        const run = await service.ctx.subagents.start(service.config.subagentProvider, {
-          label: `${input.ctx.state}/supervisor-checkpoint`,
-          prompt: [{ type: 'text', text: promptText }],
-          parent: input.parent,
-          signal: input.signal,
-          agentOptions: service.config.model ? { model: service.config.model } : undefined,
-          outputSchema: wantsSchema ? SCORE_OUTPUT_SCHEMA : undefined,
-        })
+        const stepSignal = stepSignalWithTimeout(input.signal, service.config.stepTimeoutMs)
+        let run: Awaited<ReturnType<typeof service.ctx.subagents.start>> | undefined
         try {
+          run = await service.ctx.subagents.start(service.config.subagentProvider, {
+            label: `${input.ctx.state}/supervisor-checkpoint`,
+            prompt: [{ type: 'text', text: promptText }],
+            parent: input.parent,
+            signal: stepSignal.signal,
+            agentOptions: service.config.model ? { model: service.config.model } : undefined,
+            outputSchema: wantsSchema ? SCORE_OUTPUT_SCHEMA : undefined,
+          })
           const childResult = await run.result
+          if (stepSignal.timedOut()) {
+            throw new Error(`supervisor 检查点执行超时（${service.config.stepTimeoutMs}ms）`)
+          }
           const text = toText(childResult.output)
           let score: number | null = null
           let advice = truncate(text, SUMMARY_BUDGET)
@@ -768,7 +782,8 @@ export default class AceHarnessService extends Service {
           })
           return { advice, score }
         } finally {
-          run.dispose()
+          stepSignal.dispose()
+          run?.dispose()
         }
       },
     }
@@ -786,6 +801,34 @@ function randomSuffix(): string {
 /** Structural face of the jobs registry (resolved lazily through the store). */
 interface JobRegistryFace {
   start(spec: JobStart): JobId
+}
+
+/**
+ * Derive a step-scoped signal from the caller signal plus a wall-clock
+ * timeout. The returned signal aborts the child on either event; `timedOut`
+ * reports whether the timeout — rather than the caller — fired.
+ */
+export function stepSignalWithTimeout(
+  caller: AbortSignal,
+  timeoutMs: number,
+): { signal: AbortSignal; timedOut: () => boolean; dispose: () => void } {
+  const controller = new AbortController()
+  let timedOut = false
+  const onCallerAbort = (): void => controller.abort()
+  caller.addEventListener('abort', onCallerAbort, { once: true })
+  const timer = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, timeoutMs)
+  timer.unref?.()
+  return {
+    signal: controller.signal,
+    timedOut: () => timedOut,
+    dispose: () => {
+      clearTimeout(timer)
+      caller.removeEventListener('abort', onCallerAbort)
+    },
+  }
 }
 
 /** Structural terminal outcome returned to the jobs registry. */
