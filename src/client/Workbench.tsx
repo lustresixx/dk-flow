@@ -106,10 +106,14 @@ export function Workbench(props: WorkbenchProps): JSX.Element {
   const instantiateForEdit = useCallback(
     async (templateId: string, instanceValues: Record<string, string>, workspacePath: string, fileName: string): Promise<void> => {
       try {
+        // Empty fields are deferred to run time; only bind what was filled.
+        const values = Object.fromEntries(
+          Object.entries(instanceValues).filter(([, value]) => value.trim() !== ''),
+        )
         const response = await fetch('/plugins/dsh-ace-harness/instantiate', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ templateId, values: instanceValues }),
+          body: JSON.stringify({ templateId, values }),
         })
         if (!response.ok) {
           setNotice(`实例化失败：${await response.text()}`)
@@ -306,21 +310,21 @@ function TemplateDetail(props: {
           </li>
         ))}
       </ol>
-      <h3 className={styles.sectionTitle}>参数</h3>
+      <h3 className={styles.sectionTitle}>参数（均可留空）</h3>
+      <p className={styles.formHint}>创建时只固化你填写的值；留空的参数会在每次启动工作流时询问。</p>
       <div className={styles.form}>
         {template.parameters.map((parameter) => (
           <ParameterField key={parameter.id} parameter={parameter} value={values[parameter.id] ?? ''} onChange={(value) => { set(parameter.id, value) }} />
         ))}
       </div>
-      {missing.length > 0 ? <p className={styles.errorText}>缺少必填参数：{missing.join('、')}</p> : null}
+      {missing.length > 0 ? <p className={styles.formHint}>运行时将询问：{missing.join('、')}</p> : null}
       <div className={styles.actions}>
-        <button type="button" className={styles.primary} disabled={missing.length > 0} onClick={() => { void props.submit(`/workflow run ${template.id} ${paramFlags}`) }}>
+        <button type="button" className={styles.primary} onClick={() => { void props.submit(`/workflow run ${template.id} ${paramFlags}`) }}>
           直接运行
         </button>
         <button
           type="button"
           className={styles.secondary}
-          disabled={missing.length > 0}
           onClick={() => {
             props.instantiateForEdit(template.id, values, props.workspacePath, `${template.id}.yaml`)
           }}

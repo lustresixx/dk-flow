@@ -140,12 +140,38 @@ describe('instantiateTemplate', () => {
     expect(yamlText).toContain('我的评审')
   })
 
-  it('rejects missing required parameters', async () => {
+  it('defers unprovided required parameters to run-time taskInput fields', async () => {
     const { manifestText, workflowYamlText } = await sources()
-    const known = new Set<string>()
-    expect(() =>
-      instantiateTemplate(manifestText, workflowYamlText, {}, {}, known),
-    ).toThrow(/必填|参数/)
+    const known = new Set([
+      'default-supervisor',
+      'architect',
+      'solution-breaker',
+      'design-judge',
+      'developer',
+      'code-hunter',
+      'code-judge',
+      'tester',
+      'stress-tester',
+      'documentation-writer',
+    ])
+    const { config, yamlText, pendingParams } = instantiateTemplate(manifestText, workflowYamlText, {}, {}, known)
+    expect(pendingParams.map((p) => p.id)).toEqual(['projectRoot'])
+    expect(config.context?.taskInput?.fields?.map((f) => f.id)).toContain('projectRoot')
+    expect(yamlText).toContain('taskInput')
+    expect(yamlText).toContain('projectRoot')
+  })
+
+  it('defers requirements without duplicating an existing taskInput field', async () => {
+    const { readFile } = await import('node:fs/promises')
+    const { fileURLToPath } = await import('node:url')
+    const base = fileURLToPath(new URL('../resources/workflows/mixed-agent-script/1.0.0/', import.meta.url))
+    const manifestText = await readFile(`${base}/manifest.yaml`, 'utf8')
+    const workflowYamlText = await readFile(`${base}/workflow.yaml`, 'utf8')
+    const known = new Set(['default-supervisor', 'architect', 'code-judge'])
+    const { config, pendingParams } = instantiateTemplate(manifestText, workflowYamlText, {}, {}, known)
+    expect(pendingParams.map((p) => p.id)).toEqual(['requirements'])
+    const fields = config.context?.taskInput?.fields ?? []
+    expect(fields.filter((field) => field.id === 'requirements')).toHaveLength(1)
   })
 
   it('rejects invalid enum values', async () => {

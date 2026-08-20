@@ -337,6 +337,12 @@
   margin: 0;
 }
 
+.formHint {
+  color: #a7adb8;
+  font-size: 13px;
+  margin: 4px 0 10px;
+}
+
 .progressTrack {
   height: 8px;
   border-radius: 999px;

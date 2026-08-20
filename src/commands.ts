@@ -151,7 +151,7 @@ async function dispatch(ctx: Context, service: AceHarnessService, invocation: Co
       }
       case 'create': {
         const templateId = positional[1]
-        if (!templateId) return err('用法：/workflow create <templateId> [--file name.yaml] [--param id=value ...] [--save]')
+        if (!templateId) return err('用法：/workflow create <templateId> [--file name.yaml] [--param id=value ...] [--save]（参数可留空，运行时询问）')
         const templates = await service.listTemplates()
         const template = templates
           .filter((t) => t.id === templateId)
@@ -163,17 +163,17 @@ async function dispatch(ctx: Context, service: AceHarnessService, invocation: Co
           if (key !== 'file' && key !== 'save' && key !== 'param') values[key] = value
         }
         for (const [key, value] of Object.entries(parseParamFlags(flags))) values[key] = value
-        const missing = (template.manifest.spec.parameters ?? [])
-          .filter((p) => p.required && values[p.id] === undefined && p.default === undefined)
-          .map((p) => p.label)
-        if (missing.length > 0) return err(`缺少必填参数：${missing.join('、')}`)
         const instantiated = await service.instantiate(templateId, undefined, values, {})
+        const pendingNote =
+          instantiated.pendingParams.length > 0
+            ? `\n（运行时将询问：${instantiated.pendingParams.map((p) => p.label).join('、')}；也可现在用 --param 预填固化）`
+            : ''
         if (flags.has('save')) {
           const fileName = flags.get('file') ?? `${templateId}.yaml`
           const saved = await service.saveWorkflowConfig(workspace, fileName, instantiated.yamlText)
-          return ok(`已从模板「${templateId}」创建工作流并保存到 ${saved}\n\n${instantiated.yamlText}`)
+          return ok(`已从模板「${templateId}」创建工作流并保存到 ${saved}${pendingNote}\n\n${instantiated.yamlText}`)
         }
-        return ok(`已从模板「${templateId}」创建工作流（未保存，可用 --save 落盘到工作区 .dsh/workflows）：\n\n${instantiated.yamlText}`)
+        return ok(`已从模板「${templateId}」创建工作流（未保存，可用 --save 落盘到工作区 .dsh/workflows）${pendingNote}\n\n${instantiated.yamlText}`)
       }
       case 'run': {
         return runWorkflow(ctx, service, agent, signal, positional, flags)

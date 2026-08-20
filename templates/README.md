@@ -12,7 +12,8 @@
 ## 使用方式（任选）
 
 1. **插件内直接用**：这些模板已作为内置模板打包（`code-optimization-review` / `mixed-agent-script` /
-   `simple-llm-qa` / `simple-script-pipeline`），工作台「模板」页填参即可创建实例并运行。
+   `simple-llm-qa` / `simple-script-pipeline`），工作台「模板」页填参即可创建实例并运行；
+   参数可留空——创建时只固化填写的内容，留空的必填参数会在每次启动工作流时询问。
 
 2. **复制为实例**：把任意一份 YAML 拷贝到工作区的 `.dsh/workflows/` 目录（文件名自定，
    只允许字母/数字/下划线/连字符），刷新工作台即可在「工作流」页看到，然后：

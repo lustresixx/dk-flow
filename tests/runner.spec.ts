@@ -143,12 +143,13 @@ function runWith(
   config: WorkflowConfig,
   executor: StepExecutor,
   controller: AbortController = new AbortController(),
+  inputs: Record<string, string> = {},
 ): Promise<Awaited<ReturnType<typeof runStateMachine>>> {
   const options: EngineRunOptions = {
     config,
     runId: `run-${Math.random().toString(36).slice(2, 8)}`,
     configFile: 'x.yaml',
-    inputs: {},
+    inputs,
     parent: fakeParent,
     signal: controller.signal,
     executor,
@@ -1038,6 +1039,28 @@ describe('runStateMachine', () => {
     setTimeout(() => { controller.abort() }, 50)
     const result = await runWith(config, executor, controller)
     expect(result.status).toBe('stopped')
+  })
+
+  it('falls back to run-time inputs when the workflow left requirements empty', async () => {
+    const config = singleStepConfig(
+      { name: 'AI', agent: 'researcher', role: 'defender', task: '分析' },
+    )
+    const seen: string[] = []
+    const executor: StepExecutor = {
+      async runAgentStep(input) {
+        seen.push(input.ctx.requirements)
+        return { outputSummary: 'ok', verdict: V('pass') }
+      },
+      async runLlmStep() {
+        throw new Error('不应调用 LLM 步骤')
+      },
+      async runSubworkflowStep() {
+        throw new Error('不应调用子工作流')
+      },
+    }
+    const result = await runWith(config, executor, new AbortController(), { requirements: '运行时需求' })
+    expect(result.status).toBe('completed')
+    expect(seen).toEqual(['运行时需求'])
   })
 
   it('runs a scriptFile step through the engine', async () => {

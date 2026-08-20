@@ -52,8 +52,10 @@ export function createRunState(options: {
     error: null,
     inputs: options.inputs,
     context: {
-      projectRoot: options.config.context?.projectRoot,
-      requirements: options.config.context?.requirements,
+      // Run-time answers to `requirements` / `projectRoot` taskInput fields
+      // take effect when the workflow document left the placeholders empty.
+      projectRoot: options.config.context?.projectRoot || options.inputs.projectRoot || undefined,
+      requirements: options.config.context?.requirements || options.inputs.requirements || undefined,
       workspaceMode: options.config.context?.workspaceMode,
     },
     parentSessionId: options.parentSessionId,

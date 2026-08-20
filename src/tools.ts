@@ -221,7 +221,7 @@ export function registerTools(ctx: Context, service: AceHarnessService): void {
     defineTool({
       name: 'workflow_manage',
       description:
-        '管理 ACE 工作流与运行：action=runs 列运行记录；action=show 查看一个运行的完整状态与各步结论；action=resume 恢复暂停/中断的运行；action=stop 停止运行中的实例；action=create 从内置模板创建 workflow 实例（可 save 保存到工作区 .dsh/workflows）。',
+        '管理 ACE 工作流与运行：action=runs 列运行记录；action=show 查看一个运行的完整状态与各步结论；action=resume 恢复暂停/中断的运行；action=stop 停止运行中的实例；action=create 从内置模板创建 workflow 实例（参数可留空，留空的必填参数会转为运行时询问字段；可 save 保存到工作区 .dsh/workflows）。',
       parameters: {
         action: {
           type: 'string',
@@ -304,11 +304,18 @@ export function registerTools(ctx: Context, service: AceHarnessService): void {
             if (args.save === true) {
               const fileName = (args.file as string | undefined) ?? `${templateId}.yaml`
               const saved = await service.saveWorkflowConfig(workspace, fileName, instantiated.yamlText)
-              return { created: true, saved, fileName, name: instantiated.config.workflow.name }
+              return {
+                created: true,
+                saved,
+                fileName,
+                name: instantiated.config.workflow.name,
+                pendingParams: instantiated.pendingParams,
+              }
             }
             return {
               created: true,
               name: instantiated.config.workflow.name,
+              pendingParams: instantiated.pendingParams,
               yaml: instantiated.yamlText,
             }
           }
