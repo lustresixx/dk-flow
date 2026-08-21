@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { hostname } from 'node:os'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { createRunState, runStateMachine } from '../src/engine/runner.js'
@@ -351,6 +352,71 @@ describe('runStateMachine', () => {
     expect(calls).toContain('方案/方案挑战')
   })
 
+  it('records the running process as owner (pid + hostId) when a run is created', () => {
+    // The stale-run normalization trusts a live owner ONLY on the recording
+    // machine (isOwnerAlive host gate, P1-2): createRunState must record the
+    // pid and the machine identity together, or the exemption can never fire.
+    const config = redBlueConfig()
+    const created = createRunState({
+      runId: 'run-owner',
+      workflowName: config.workflow.name,
+      configFile: 'red-blue.yaml',
+      config,
+      inputs: {},
+      parentSessionId: SID,
+    })
+    expect(created.pid).toBe(process.pid)
+    expect(created.hostId).toBe(hostname())
+  })
+
+  it('refreshes pid + hostId on (re)start, taking ownership from a stale foreign owner (P1-1/P1-2)', async () => {
+    // A state persisted long ago by a process on ANOTHER machine must not keep
+    // its recorded owner after resume: the engine takes ownership by
+    // refreshing pid + hostId to THIS process before the first persist, so the
+    // shared stale rule trusts (or distrusts) the NEW owner going forward.
+    const config = redBlueConfig()
+    const stepOutcome = (key: string): StepOutcome => ({
+      key,
+      state: '方案',
+      step: '方案设计',
+      type: 'agent',
+      agent: 'architect',
+      role: 'defender',
+      outputSummary: '已完成',
+      verdict: V('pass'),
+      startedAt: '2026-01-01T00:00:00Z',
+      finishedAt: '2026-01-01T00:01:00Z',
+    })
+    const persisted = createRunState({
+      runId: 'run-5',
+      workflowName: config.workflow.name,
+      configFile: 'red-blue.yaml',
+      config,
+      inputs: {},
+      parentSessionId: SID,
+    })
+    persisted.status = 'running'
+    persisted.currentState = '方案'
+    persisted.pendingState = { name: '方案', completedSteps: [stepOutcome('方案/方案设计')] }
+    // Stale owner from another machine + a dead pid: neither may survive.
+    persisted.pid = 999_999_999
+    persisted.hostId = 'some-other-machine'
+    const { persisted: states } = await run(
+      config,
+      {
+        '方案/方案挑战': V('pass'),
+        '方案/方案裁决': V('pass'),
+        '执行/任务执行': V('pass'),
+        '验收/验收验证': V('pass'),
+        '完成/交付汇总': V('pass'),
+      },
+      persisted,
+    )
+    const last = states[states.length - 1]!
+    expect(last.pid).toBe(process.pid)
+    expect(last.hostId).toBe(hostname())
+  })
+
   it('resumes a waiting-human no-match decision from the persisted state', async () => {
     const config = redBlueConfig()
     let humanCalls = 0
@@ -431,6 +497,9 @@ describe('runStateMachine', () => {
         calls.push(`${input.ctx.state}/${input.stepName}`)
         return { outputSummary: '', verdict: V('pass') }
       },
+      async runLlmStep() {
+        throw new Error('该测试不应启动 LLM 步骤')
+      },
       async runSubworkflowStep(input) {
         calls.push(`sub:${input.stepName}`)
         return { outcome: 'completed', verdict: V('pass') }
@@ -453,6 +522,57 @@ describe('runStateMachine', () => {
     expect(result.status).toBe('completed')
     expect(calls).toContain('sub:子工作流')
     expect(calls).toContain('主/汇总')
+  })
+
+  it('forwards the parent workflow projectRoot to subworkflow steps', async () => {
+    // The child config inherits the parent's project root so scripts in a
+    // nested workflow can still reach workspace files. The forwarding happens
+    // at the step boundary: the executor receives `inheritedProjectRoot` when
+    // the parent context carries a projectRoot, and nothing when it does not.
+    const config: WorkflowConfig = {
+      workflow: {
+        name: '子流投影',
+        mode: 'state-machine',
+        states: [
+          {
+            name: '主',
+            steps: [{ name: '子工作流', type: 'subworkflow', workflow: 'child.yaml' }],
+            transitions: [],
+            isInitial: true,
+            isFinal: true,
+          },
+        ],
+      },
+      context: { projectRoot: '/proj/ws' },
+    }
+    let seenRoot: string | undefined
+    const executor: StepExecutor = {
+      async runAgentStep() {
+        throw new Error('该测试不应启动 Agent 步骤')
+      },
+      async runLlmStep() {
+        throw new Error('该测试不应启动 LLM 步骤')
+      },
+      async runSubworkflowStep(input) {
+        seenRoot = input.inheritedProjectRoot
+        return { outcome: 'completed', verdict: V('pass') }
+      },
+    }
+    const options: EngineRunOptions = {
+      config,
+      runId: 'run-pr',
+      configFile: 'p.yaml',
+      inputs: {},
+      parent: fakeParent,
+      signal: new AbortController().signal,
+      executor,
+      persist: async () => {},
+      load: async () => null,
+      resolveSubworkflow: async () => config,
+      askHumanTransition: async ({ candidates }) => candidates[0] ?? '',
+    }
+    await runStateMachine(options)
+    expect(seenRoot).toBe('/proj/ws')
   })
 
   it('records supervisor scores and notes on state outcomes', async () => {
@@ -540,6 +660,9 @@ describe('runStateMachine', () => {
     const executor: StepExecutor = {
       async runAgentStep() {
         throw new Error('脚本流水线不应启动 Agent 步骤')
+      },
+      async runLlmStep() {
+        throw new Error('脚本流水线不应启动 LLM 步骤')
       },
       async runSubworkflowStep() {
         throw new Error('脚本流水线不应启动子工作流')
