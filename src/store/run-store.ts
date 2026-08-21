@@ -68,6 +68,21 @@ export const STALE_RUN_MS = 10 * 60_000
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'stopped', 'crashed'])
 
 /**
+ * Normalize ONE run status for display/stats (P1-2): a non-terminal run whose
+ * `updatedAt` is older than the staleness bound was abandoned by a dead
+ * process and reads as `crashed`. THE single stale rule — shared by the JSON
+ * store scan (`normalizeStaleRun`) and the SQLite archive's stats projection,
+ * so both feed adapters count zombie runs identically instead of diverging
+ * (`crashed` on the file feed vs `running` on the SQL feed).
+ */
+export function normalizeRunStatus(status: string, updatedAt: string, now = Date.now()): RunState['status'] {
+  if (TERMINAL_STATUSES.has(status)) return status as RunState['status']
+  const updated = Date.parse(updatedAt)
+  if (Number.isFinite(updated) && now - updated > STALE_RUN_MS) return 'crashed'
+  return status as RunState['status']
+}
+
+/**
  * Normalize a loaded run state for display: a non-terminal run whose
  * `updatedAt` is older than the staleness bound was abandoned by a dead
  * process. Its status reads as `crashed` (without touching the stored
@@ -75,16 +90,13 @@ const TERMINAL_STATUSES = new Set(['completed', 'failed', 'stopped', 'crashed'])
  * entries out of live discovery.
  */
 export function normalizeStaleRun(state: RunState, now = Date.now()): RunState {
-  if (TERMINAL_STATUSES.has(state.status)) return state
-  const updated = Date.parse(state.updatedAt)
-  if (Number.isFinite(updated) && now - updated > STALE_RUN_MS) {
-    return {
-      ...state,
-      status: 'crashed',
-      error: '运行中断（进程重启或长时间无更新），可用 /workflow resume 恢复',
-    }
+  const status = normalizeRunStatus(state.status, state.updatedAt, now)
+  if (status === state.status) return state
+  return {
+    ...state,
+    status,
+    error: '运行中断（进程重启或长时间无更新），可用 /workflow resume 恢复',
   }
-  return state
 }
 
 /** Load every run state of a workspace (skipping unreadable ones). */

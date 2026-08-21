@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { RunState } from '../src/engine/types.ts'
 import { stepDurationMs } from '../src/store/audit-events.ts'
 import { aggregateRunStats, combineStatsProjection } from '../src/store/run-stats.ts'
-import { appendAudit, saveRunState } from '../src/store/run-store.ts'
+import { appendAudit, normalizeStaleRun, saveRunState } from '../src/store/run-store.ts'
 import { SqliteArchive } from '../src/store/sqlite-archive.ts'
 import { readWorkspaceSettings, writeWorkspaceSettings } from '../src/store/workspace-settings.ts'
 
@@ -256,6 +256,72 @@ describe('SqliteArchive', () => {
     expect(byLabel).toEqual({ '<1s': 0, '1-5s': 1, '5-30s': 1, '30-120s': 0, '>120s': 0 })
     expect(sqlStats.stepDurationPercentiles).toEqual({ p50: 5000, p95: 5000 })
     expect(sqlStats.stepCount).toBe(2)
+    archive.close()
+  })
+
+  it('counts zombie runs as crashed in BOTH feeds (P1-2 stale-status pin)', () => {
+    const archive = new SqliteArchive()
+    // Fixed reference instant so the staleness boundary (STALE_RUN_MS = 10min)
+    // is deterministic; the runs below sit clearly on either side of it.
+    const NOW = Date.parse('2026-08-20T10:20:00.000Z')
+    // Zombie: non-terminal and untouched for 20 minutes — reads as `crashed`.
+    const zombie = makeRun('run-zombie', {
+      status: 'running',
+      startedAt: '2026-08-20T09:00:00.000Z',
+      updatedAt: '2026-08-20T10:00:00.000Z',
+      finishedAt: null,
+    })
+    // Fresh non-terminal: must stay `running` in both feeds.
+    const fresh = makeRun('run-fresh', {
+      status: 'running',
+      startedAt: '2026-08-20T10:19:00.000Z',
+      updatedAt: '2026-08-20T10:19:30.000Z',
+      finishedAt: null,
+    })
+    // Terminal runs never age out, however old.
+    const done = makeRun('run-done', {
+      status: 'completed',
+      startedAt: '2026-08-20T08:00:00.000Z',
+      updatedAt: '2026-08-20T08:10:00.000Z',
+      finishedAt: '2026-08-20T08:10:00.000Z',
+    })
+    for (const run of [zombie, fresh, done]) archive.archiveRun(workspace, '.ace-workflows', run)
+
+    // SQL feed: the projection normalizes statuses with the SAME stale rule
+    // the file scan applies (P1-2). Before the fix it reported the zombie as
+    // `running` (2 running) while the JSON feed said `crashed` — the
+    // dual-feed status split the adversarial review reproduced (DIVERGE=true).
+    const sqlStats = combineStatsProjection(archive.queryStatsProjection(workspace, '.ace-workflows', NOW))
+    // JSON feed: service.workspaceStats scans listRunStates, which normalizes
+    // every loaded state through normalizeStaleRun before aggregation.
+    const jsonStats = aggregateRunStats(
+      [zombie, fresh, done].map((state) => {
+        const normalized = normalizeStaleRun(state, NOW)
+        return {
+          status: normalized.status,
+          startedAt: normalized.startedAt,
+          finishedAt: normalized.finishedAt,
+          states: normalized.stateOutcomes.map((outcome) => ({ state: outcome.state, verdict: outcome.verdict.verdict })),
+          steps: normalized.stateOutcomes.flatMap((outcome) =>
+            outcome.steps.map((step) => ({
+              state: step.state,
+              step: step.step,
+              verdict: step.verdict?.verdict ?? null,
+              attempts: step.attempts ?? null,
+              durationMs: stepDurationMs(step),
+            })),
+          ),
+          failedSteps: (normalized.failedSteps ?? []).map((failed) => ({
+            state: failed.state,
+            step: failed.step,
+            attempts: failed.attempts ?? null,
+          })),
+        }
+      }),
+    )
+    expect(sqlStats).toEqual(jsonStats)
+    expect(sqlStats.byStatus).toEqual({ crashed: 1, running: 1, completed: 1 })
+    expect(sqlStats.totalRuns).toBe(3)
     archive.close()
   })
 

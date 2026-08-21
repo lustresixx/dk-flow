@@ -13,6 +13,7 @@ import { DatabaseSync } from 'node:sqlite'
 import type { RunState } from '../engine/types.js'
 import { effectiveStepDurationMs } from './audit-events.js'
 import { runDir, runsRoot, runStateDir } from './paths.js'
+import { normalizeRunStatus } from './run-store.js'
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS runs (
@@ -321,11 +322,16 @@ export class SqliteArchive {
    * extracted from state_json with JSON1. Step rows carry the EFFECTIVE
    * duration (monotonic measurement preferred, wall-clock span fallback, see
    * `effectiveStepDurationMs`), so the SQL feed and the file feed answer
-   * byte-identical statistics for new AND legacy runs (P1-B / P1-②).
+   * byte-identical statistics for new AND legacy runs (P1-B / P1-②). Run
+   * statuses pass through the SAME stale normalization as the file scan
+   * (P1-2): a zombie `running` row abandoned by a dead process reads as
+   * `crashed` in both feeds, so the status counts cannot diverge.
+   * @param now - staleness reference instant (injected for deterministic tests).
    */
   queryStatsProjection(
     workspace: string,
     runDirName: string,
+    now = Date.now(),
   ): {
     byStatus: Array<{ status: string; count: number }>
     runs: Array<{ startedAt: string; finishedAt: string | null; status: string }>
@@ -334,12 +340,17 @@ export class SqliteArchive {
     failedSteps: Array<{ state: string; step: string; attempts: number | null }>
   } {
     const db = this.open(workspace, runDirName)
-    const byStatus = db
-      .prepare('SELECT status, COUNT(*) AS n FROM runs GROUP BY status')
-      .all() as unknown as Array<{ status: string; n: number }>
+    // Status counts derive from the SAME normalized run rows the kernel sees
+    // (aggregateWorkspaceStats counts `runs`, not this map), so the two can
+    // never disagree about a zombie run.
     const runs = db
-      .prepare('SELECT started_at, finished_at, status FROM runs')
-      .all() as unknown as Array<{ started_at: string; finished_at: string | null; status: string }>
+      .prepare('SELECT started_at, finished_at, status, updated_at FROM runs')
+      .all() as unknown as Array<{ started_at: string; finished_at: string | null; status: string; updated_at: string }>
+    const statusCounts = new Map<string, number>()
+    for (const row of runs) {
+      const status = normalizeRunStatus(row.status, row.updated_at, now)
+      statusCounts.set(status, (statusCounts.get(status) ?? 0) + 1)
+    }
     const stateVerdicts = db
       .prepare(
         `SELECT json_extract(j.value, '$.state') AS state,
@@ -380,8 +391,15 @@ export class SqliteArchive {
       )
       .all() as unknown as Array<{ state: unknown; step: unknown; attempts: unknown }>
     return {
-      byStatus: byStatus.map((row) => ({ status: row.status, count: row.n })),
-      runs: runs.map((row) => ({ startedAt: row.started_at, finishedAt: row.finished_at, status: row.status })),
+      byStatus: [...statusCounts.entries()].map(([status, count]) => ({ status, count })),
+      runs: runs.map((row) => ({
+        startedAt: row.started_at,
+        finishedAt: row.finished_at,
+        // Same stale rule as the file scan (P1-2): abandoned non-terminal
+        // runs count as `crashed`, exactly like the JSON feed's
+        // `normalizeStaleRun`, so /stats cannot split by feed.
+        status: normalizeRunStatus(row.status, row.updated_at, now),
+      })),
       stateVerdicts: stateVerdicts
         .filter((row) => typeof row.state === 'string' && typeof row.verdict === 'string')
         .map((row) => ({ state: row.state, verdict: row.verdict, count: row.n })),
