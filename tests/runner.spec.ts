@@ -1160,6 +1160,9 @@ describe('runStateMachine', () => {
       async runAgentStep() {
         throw new Error('不应调用 Agent 步骤')
       },
+      async runLlmStep() {
+        throw new Error('不应调用 LLM 步骤')
+      },
       async runSubworkflowStep() {
         throw new Error('不应调用子工作流')
       },

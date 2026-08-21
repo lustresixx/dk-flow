@@ -161,6 +161,7 @@ describe('settleEngineRun (P0-A terminal settlement)', () => {
       signal: new AbortController().signal,
       executor: {
         runAgentStep: async () => { throw new Error('不应启动 Agent 步骤') },
+        runLlmStep: async () => { throw new Error('不应启动 LLM 步骤') },
         runSubworkflowStep: async () => { throw new Error('不应启动子工作流') },
       },
       persist: async () => {},
