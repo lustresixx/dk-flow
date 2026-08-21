@@ -128,10 +128,22 @@
 2. **[既有问题观察]** `runScriptNode` 成功路径 worker 不 terminate（脚本步骤线程泄漏）——非本方案引入，建议单独跟进。
 3. **[既有问题观察]** `runner.spec`/`transitions.spec` 存在改动前遗留的类型宽松（vitest 不 typecheck，不影响运行）。
 4. **[G7]** 旧运行无 `durationMs`：步骤直方图/百分位按缺失排除、`stepCount` 照常计数；文档声明统计起点为打点批次后。
-5. **[覆盖边界]** 崩溃（进程被杀）写 end 仍由 `normalizeStaleRun` 读时兜底（方案 §3-A 边界，不合成写者）；工作台统计面板为最小展示形态（无交互筛选），后续可按需扩展。
+5. **[覆盖边界·已收窄（P1-③）]** 进程被杀/断电时**没有任何代码可执行**，因此这类"崩溃"**不写 end 审计行、也不落盘任何状态**——end 事件保证范围 = 进程内可到达的异常/中断/超时终态路径；e2e 审计断言（`scripts/e2e-platform.mjs:156-162`）与双 feed"逐字节一致"统计均不覆盖进程级被杀。`normalizeStaleRun`（`src/store/run-store.ts:77-88`）只在**读时**把僵尸 `running` 在内存中显示为 `crashed`（不写 audit、不写 state.json，`/workflow resume` 仍可用）——它是**显示层兜底，不是审计兜底**；本报告初版"崩溃写 end 仍由 normalizeStaleRun 读时兜底"的表述过宽，已按此收窄。工作台统计面板为最小展示形态（无交互筛选），后续可按需扩展。
 
 ## 10. 交付定位
 
 - 每批次独立提交，commit message 含“改了什么/为什么/对应问题”；全量 diff = `feffe5f..HEAD`（7 个提交 + 本报告）。
 - 未触碰方案之外的模块；工作树仅新增预期文件（docs 报告 + 提交），无破坏性 git 操作（无 reset/checkout/clean）。
 - 维护者复现路径：逐提交 `git show <hash>` → 跑 §7 命令 → 宿主跑测试与 e2e。
+
+## 11. P1 闭环（对抗审查 → 终审 fail 回退后，本批次）
+
+对抗审查（独立挑战）与终审（git 锚点 + 直接 node 执行复核）裁定当前提交态不放行，3 项 P1 已全部闭环（提交 `7234f3f` / `bfc5658` / 本提交），需求②③与内核/缓存/导出面证据充分，无需重做交付工作：
+
+| P1 | 裁定内容 | 闭环动作 | 证据 |
+|---|---|---|---|
+| ① 提交态测试红 | `tests/run-stats.spec.ts`「caps step and failed-step hotspots at 10 entries」断言 count=25，与内核契约（步骤行 = 原始执行行、按 (state,step,verdict) 键聚合）矛盾；修复写在工作树但从未提交，提交态必红 | 提交回归步骤的修复（25 个不同键 → 封顶 10 条、每条 count=1；25 个同键 → 单条 count=25，计数不被封顶截断）与 16 条边界用例 `tests/observability-boundary.spec.ts`（拒绝路径 load 错误 end 行、stepDurationMs 全分支、统计内核边缘、缓存失效后重设、failedSteps resume 往返） | `7234f3f`；桥实测 run-stats 12/12、observability-boundary 16/16 |
+| ② 旧数据双 feed 口径分裂 | 无 `durationMs` 的旧步骤行：JSON feed 经 `stepDurationMs` 回退时间戳差（实测 5-30s:1 / p50=5000），SQL feed 原始提取为 null（全零桶 / p50=null）——与「归档开启时统计与文件扫描逐字节一致」的核心主张冲突 | SQL feed 的 JSON1 提取补 `startedAt/finishedAt`，并经共享口径 `effectiveStepDurationMs`（单调钟优先、时间戳差回退）折算**有效耗时**；`stepDurationMs` 改为委托该口径。补 DIVERGE 等价钉：归档一条旧式运行（无 durationMs）→ `combineStatsProjection` 与 JSON feed（`aggregateRunStats` + `stepDurationMs`，即 service 的真实映射）**deep-equal**，且耗时确实落桶 | `bfc5658`；直接 node 复算：旧口径全零桶 + p50=null vs 新口径 1-5s:1 / 5-30s:1 / p50=5000；sqlite-archive 12/12、audit-events 10/10 |
+| ③ 崩溃窗口主张过宽 | 本报告初版「崩溃（进程被杀）写 end 仍由 `normalizeStaleRun` 读时兜底」表述误导：进程死亡无代码可执行，`normalizeStaleRun` 只读时把内存中的状态显示为 `crashed`，**不写 audit、不写 state.json**——是显示层兜底而非审计兜底 | §9.5 已收窄为准确边界：end 事件保证范围 = 进程内可到达的异常/中断/超时终态路径；进程级被杀不写 end；`normalizeStaleRun` 仅显示层兜底（既有 `tests/stale-run.spec.ts`「不触碰文件」断言即此语义的钉） | 本提交（§9.5 修订） |
+
+**残余门禁（宿主）**：`pnpm install --frozen-lockfile && pnpm test`（35 文件 / 292 用例：288 + 本批次 DIVERGE 钉 1 条 + effectiveStepDurationMs 3 条）与 `node scripts/e2e-platform.mjs`（/stats 新鲜断言 + p95 预算）仍为唯一权威对照——本沙箱 `spawn EPERM` 环境边界不变（本批次桥实测 35 文件 / 278 pass / 4 fail，4 个失败全部为 `pre-commands.spec.ts` 真实 shell 子进程的 EPERM 环境边界，非回归）。
