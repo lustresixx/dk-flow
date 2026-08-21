@@ -319,7 +319,8 @@ async function executeState(
 
   // Step execution lives in state-steps.ts and is shared with the service's
   // isolated verification (P0-3): the sequence below only wires run-level
-  // bookkeeping (pendingState / progress counters / persist) into the hook.
+  // bookkeeping (pendingState / progress counters / failed steps / persist)
+  // into the hook.
   const completedSteps = await executeStateSteps(
     options,
     machineState,
@@ -334,6 +335,13 @@ async function executeState(
         runState.pendingState = { name: machineState.name, completedSteps: [...completed] }
         runState.completedSteps =
           runState.stateOutcomes.reduce((sum, item) => sum + item.steps.length, 0) + completed.length
+        await persist()
+      },
+      onStepFailed: async (failed) => {
+        // Additive failure history (P0-B): there is no StepOutcome for a
+        // failed step, so the failure statistics read this list. Failed steps
+        // are NOT in pendingState.completedSteps — a resume re-executes them.
+        runState.failedSteps = [...(runState.failedSteps ?? []), failed]
         await persist()
       },
     },

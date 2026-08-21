@@ -1001,6 +1001,89 @@ describe('runStateMachine', () => {
     expect(result.error).toContain('一直失败')
   })
 
+  it('records failed steps with their retry count and persists them (P0-B)', async () => {
+    const config = singleStepConfig(
+      { name: 'AI', agent: 'researcher', role: 'defender', task: '分析', retry: { maxRetries: 1, backoffMs: 1 } },
+    )
+    const persisted: RunState[] = []
+    const executor: StepExecutor = {
+      async runAgentStep() {
+        throw new Error('一直失败')
+      },
+      async runLlmStep() {
+        throw new Error('不应调用 LLM 步骤')
+      },
+      async runSubworkflowStep() {
+        throw new Error('不应调用子工作流')
+      },
+    }
+    const options: EngineRunOptions = {
+      config,
+      runId: 'run-fail-record',
+      configFile: 'x.yaml',
+      inputs: {},
+      parent: fakeParent,
+      signal: new AbortController().signal,
+      executor,
+      persist: async (state) => {
+        persisted.push(JSON.parse(JSON.stringify(state)) as RunState)
+      },
+      load: async () => null,
+      resolveSubworkflow: async () => config,
+      askHumanTransition: async ({ candidates }) => candidates[0] ?? '',
+    }
+    const result = await runStateMachine(options)
+    expect(result.status).toBe('failed')
+    const last = persisted[persisted.length - 1]!
+    expect(last.failedSteps).toHaveLength(1)
+    expect(last.failedSteps![0]).toMatchObject({
+      key: '主/AI',
+      state: '主',
+      step: 'AI',
+      type: 'agent',
+      error: '一直失败',
+      attempts: 2, // first attempt + one retry (maxRetries: 1)
+    })
+  })
+
+  it('does not record deliberately aborted steps as failures (stopped, not failed)', async () => {
+    const config = singleStepConfig(
+      { name: 'AI', agent: 'researcher', role: 'defender', task: '分析', retry: { maxRetries: 5, backoffMs: 30 } },
+    )
+    const persisted: RunState[] = []
+    const executor: StepExecutor = {
+      async runAgentStep() {
+        throw new Error('持续失败')
+      },
+      async runLlmStep() {
+        throw new Error('不应调用 LLM 步骤')
+      },
+      async runSubworkflowStep() {
+        throw new Error('不应调用子工作流')
+      },
+    }
+    const controller = new AbortController()
+    setTimeout(() => { controller.abort() }, 20)
+    const options: EngineRunOptions = {
+      config,
+      runId: 'run-abort-record',
+      configFile: 'x.yaml',
+      inputs: {},
+      parent: fakeParent,
+      signal: controller.signal,
+      executor,
+      persist: async (state) => {
+        persisted.push(JSON.parse(JSON.stringify(state)) as RunState)
+      },
+      load: async () => null,
+      resolveSubworkflow: async () => config,
+      askHumanTransition: async ({ candidates }) => candidates[0] ?? '',
+    }
+    const result = await runStateMachine(options)
+    expect(result.status).toBe('stopped')
+    expect(persisted[persisted.length - 1]?.failedSteps ?? []).toHaveLength(0)
+  })
+
   it('threads step timeoutMinutes to the executor in ms', async () => {
     const config = singleStepConfig(
       { name: 'AI', agent: 'researcher', role: 'defender', task: '分析', timeoutMinutes: 5 },

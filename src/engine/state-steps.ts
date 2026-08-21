@@ -11,7 +11,7 @@ import { buildStateEvidence, buildStepEvidence, CONCLUSION_BUDGET, truncate } fr
 import { runScriptNode } from './script-runner.js'
 import { runScriptFile } from './script-file-runner.js'
 import { joinSegment, segmentSteps } from './transitions.js'
-import { EngineError, type EngineRunOptions, type StateOutcome, type StepOutcome } from './types.js'
+import { EngineError, type EngineRunOptions, type FailedStepRecord, type StateOutcome, type StepOutcome } from './types.js'
 
 const now = (): string => new Date().toISOString()
 
@@ -55,6 +55,14 @@ export interface StateStepsRunInput {
 export interface StateStepsHooks {
   /** Fires after each newly finished step (persist / progress projection). */
   onStepFinished?: (completedSteps: readonly StepOutcome[]) => Promise<void>
+  /**
+   * Fires when a step throws and the run is about to fail (P0-B): there is
+   * no StepOutcome for the failed step, so the failure record feeds the
+   * failure statistics. Not fired for deliberate aborts (the run settles as
+   * `stopped`, not `failed`). The hook's own failure is swallowed — the step
+   * error decides the run outcome.
+   */
+  onStepFailed?: (failed: FailedStepRecord) => Promise<void>
   /** Run parallel groups in declaration order (isolated verification). */
   sequential?: boolean
 }
@@ -99,6 +107,10 @@ function sleepAbortable(ms: number, signal: AbortSignal): Promise<void> {
 /**
  * Retry a transient-failure function with exponential backoff. A settled
  * value (including a `fail` verdict) is never retried — only thrown errors.
+ * When the retries are exhausted (or the run aborts), the final error is
+ * rethrown with an `attempts` property attached so the failure recorder can
+ * report how many attempts the step took (P0-B: failed steps have no
+ * `StepOutcome` to carry the count).
  */
 async function retryOnError<T>(
   run: () => Promise<T>,
@@ -111,10 +123,21 @@ async function retryOnError<T>(
     try {
       return { value: await run(), attempts }
     } catch (error) {
-      if (signal.aborted || attempts > policy.maxRetries) throw error
+      if (signal.aborted || attempts > policy.maxRetries) {
+        if (error instanceof Error && (error as { attempts?: unknown }).attempts === undefined) {
+          ;(error as { attempts?: number }).attempts = attempts
+        }
+        throw error
+      }
       await sleepAbortable(policy.backoffMs * 2 ** (attempts - 1), signal)
     }
   }
+}
+
+/** Attempt count a thrown step error carried (1 when none was attached). */
+function attemptsOf(error: unknown): number {
+  const attempts = (error as { attempts?: unknown } | null)?.attempts
+  return typeof attempts === 'number' && Number.isFinite(attempts) && attempts >= 1 ? attempts : 1
 }
 
 /** Infer a step role from the step, the adversarial policy, or step order. */
@@ -362,10 +385,34 @@ export async function executeStateSteps(
       if (completedKeys.has(key)) {
         return completedSteps.find((item) => item.key === key)!
       }
-      const outcome = await executeStateStep({ options, machineState, step, run, completedSteps: evidenceSnapshot })
-      completedSteps.push(outcome)
-      await hooks.onStepFinished?.(completedSteps)
-      return outcome
+      const startedAt = now()
+      try {
+        const outcome = await executeStateStep({ options, machineState, step, run, completedSteps: evidenceSnapshot })
+        completedSteps.push(outcome)
+        await hooks.onStepFinished?.(completedSteps)
+        return outcome
+      } catch (error) {
+        // A failed step has no StepOutcome (P0-B): record it for the failure
+        // statistics before the run settles. Deliberate aborts settle as
+        // `stopped` — not a failure — so they are not recorded.
+        if (!options.signal.aborted) {
+          try {
+            await hooks.onStepFailed?.({
+              key,
+              state: machineState.name,
+              step: step.name,
+              type: step.type ?? 'agent',
+              error: error instanceof Error ? error.message : String(error),
+              attempts: attemptsOf(error),
+              startedAt,
+              finishedAt: now(),
+            })
+          } catch {
+            // Failure recording is best-effort; the step error decides the run.
+          }
+        }
+        throw error
+      }
     }
     if (!hooks.sequential && segmentWorkflowSteps.length > 1) {
       await Promise.all(segmentWorkflowSteps.map((step) => runOne(step)))

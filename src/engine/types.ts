@@ -37,6 +37,22 @@ export interface StepOutcome {
   durationMs?: number
 }
 
+/** One failed step execution — there is no StepOutcome for it. */
+export interface FailedStepRecord {
+  /** Stable key `<stateName>/<stepName>`, same space as `StepOutcome.key`. */
+  key: string
+  state: string
+  step: string
+  /** Step kind as declared in the workflow (`agent` when omitted). */
+  type: StepType
+  /** Error message that failed the step (final attempt). */
+  error: string
+  /** Total attempts before the failure settled; 1 means a single attempt. */
+  attempts: number
+  startedAt: string
+  finishedAt: string
+}
+
 /** Verdict of a completed state, derived from its last segment. */
 export interface StateOutcome {
   state: string
@@ -63,6 +79,15 @@ export interface RunState {
   totalSteps: number
   completedSteps: number
   stateOutcomes: StateOutcome[]
+  /**
+   * Additive failure history: every step that threw, in order. There is no
+   * `StepOutcome` for a failed step (the run fails), so the failure
+   * statistics draw on this list; on resume the failed steps re-execute
+   * (they are not part of `pendingState.completedSteps`), while this history
+   * keeps accumulating across resumes. Absent on runs persisted before the
+   * field landed.
+   */
+  failedSteps?: FailedStepRecord[]
   /** Steps already completed inside the current (not yet finished) state. */
   pendingState: { name: string; completedSteps: StepOutcome[] } | null
   /** Durable human decision point; resume continues from here. */
