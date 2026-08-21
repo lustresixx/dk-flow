@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { RunState } from '../src/engine/types.ts'
+import { stepDurationMs } from '../src/store/audit-events.ts'
+import { aggregateRunStats, combineStatsProjection } from '../src/store/run-stats.ts'
 import { appendAudit, saveRunState } from '../src/store/run-store.ts'
 import { SqliteArchive } from '../src/store/sqlite-archive.ts'
 import { readWorkspaceSettings, writeWorkspaceSettings } from '../src/store/workspace-settings.ts'
@@ -127,9 +129,11 @@ describe('SqliteArchive', () => {
     expect(projection.runs[0]?.status).toBe('completed')
     expect(projection.stateVerdicts).toContainEqual({ state: '状态一', verdict: 'success', count: 2 })
     // Step rows ride along from state_json (P0-B): makeRun carries one step
-    // per run; old rows have no attempts/durationMs → null.
+    // per run with a 60s wall-clock span and no monotonic durationMs — the
+    // projection reports the EFFECTIVE duration (timestamp-span fallback,
+    // P1-②), so legacy rows stay in the histogram exactly like the JSON feed.
     expect(projection.steps).toHaveLength(2)
-    expect(projection.steps[0]).toMatchObject({ state: '状态一', step: '步骤A', verdict: 'success', attempts: null, durationMs: null })
+    expect(projection.steps[0]).toMatchObject({ state: '状态一', step: '步骤A', verdict: 'success', attempts: null, durationMs: 60_000 })
     expect(projection.failedSteps).toEqual([])
     archive.close()
   })
@@ -175,6 +179,83 @@ describe('SqliteArchive', () => {
     expect(projection.steps).toHaveLength(1)
     expect(projection.steps[0]).toMatchObject({ state: '状态一', step: '步骤A', verdict: 'success', attempts: 2, durationMs: 480 })
     expect(projection.failedSteps).toEqual([{ state: '状态一', step: '步骤B', attempts: 3 }])
+    archive.close()
+  })
+
+  it('answers byte-identical step statistics to the JSON feed for legacy runs without durationMs (P1-② DIVERGE pin)', () => {
+    const archive = new SqliteArchive()
+    // A pre-instrumentation run: step rows carry wall-clock timestamps but no
+    // monotonic durationMs (G7). Before P1-② the SQL feed dropped these rows
+    // from the histogram (all-zero buckets / null percentiles) while the JSON
+    // feed kept them via the timestamp-span fallback — the dual-feed
+    // divergence the adversarial review reproduced (5-30s:1/p50=5000 vs
+    // 全零/p50=null).
+    const legacy = makeRun('run-legacy', {
+      status: 'completed',
+      finishedAt: '2026-08-20T10:05:00.000Z',
+      stateOutcomes: [
+        {
+          state: '状态一',
+          verdict: { verdict: 'success', issues: [], rationale: '通过' },
+          steps: [
+            {
+              key: '状态一/步骤A',
+              state: '状态一',
+              step: '步骤A',
+              type: 'script',
+              outputSummary: '产出A',
+              verdict: { verdict: 'success', issues: [], rationale: '产出A' },
+              startedAt: '2026-08-20T10:00:00.000Z',
+              finishedAt: '2026-08-20T10:00:05.000Z', // 5000ms span
+            },
+            {
+              key: '状态一/步骤B',
+              state: '状态一',
+              step: '步骤B',
+              type: 'script',
+              outputSummary: '产出B',
+              verdict: { verdict: 'fail', issues: [], rationale: '产出B' },
+              startedAt: '2026-08-20T10:00:05.000Z',
+              finishedAt: '2026-08-20T10:00:07.500Z', // 2500ms span
+            },
+          ],
+          finishedAt: '2026-08-20T10:00:07.500Z',
+        },
+      ],
+    })
+    archive.archiveRun(workspace, '.ace-workflows', legacy)
+    const sqlStats = combineStatsProjection(archive.queryStatsProjection(workspace, '.ace-workflows'))
+    // The JSON feed maps steps exactly like service.workspaceStats does:
+    // durationMs = stepDurationMs(step) with the same fallback.
+    const jsonStats = aggregateRunStats([
+      {
+        status: legacy.status,
+        startedAt: legacy.startedAt,
+        finishedAt: legacy.finishedAt,
+        states: legacy.stateOutcomes.map((outcome) => ({ state: outcome.state, verdict: outcome.verdict.verdict })),
+        steps: legacy.stateOutcomes.flatMap((outcome) =>
+          outcome.steps.map((step) => ({
+            state: step.state,
+            step: step.step,
+            verdict: step.verdict?.verdict ?? null,
+            attempts: step.attempts ?? null,
+            durationMs: stepDurationMs(step),
+          })),
+        ),
+        failedSteps: (legacy.failedSteps ?? []).map((failed) => ({
+          state: failed.state,
+          step: failed.step,
+          attempts: failed.attempts ?? null,
+        })),
+      },
+    ])
+    expect(sqlStats).toEqual(jsonStats)
+    // The legacy durations really landed: the pre-fix SQL feed reported
+    // all-zero buckets with null percentiles here.
+    const byLabel = Object.fromEntries(sqlStats.stepDurationBuckets.map((bucket) => [bucket.label, bucket.count]))
+    expect(byLabel).toEqual({ '<1s': 0, '1-5s': 1, '5-30s': 1, '30-120s': 0, '>120s': 0 })
+    expect(sqlStats.stepDurationPercentiles).toEqual({ p50: 5000, p95: 5000 })
+    expect(sqlStats.stepCount).toBe(2)
     archive.close()
   })
 

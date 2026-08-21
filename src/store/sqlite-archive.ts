@@ -11,6 +11,7 @@ import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import type { RunState } from '../engine/types.js'
+import { effectiveStepDurationMs } from './audit-events.js'
 import { runDir, runsRoot, runStateDir } from './paths.js'
 
 const SCHEMA = `
@@ -317,9 +318,10 @@ export class SqliteArchive {
   /**
    * SQL-side statistics projection: per-run status/timestamps, the
    * (state, verdict) matrix, raw step rows, and failed-step rows — all
-   * extracted from state_json with JSON1. The raw step/failed rows feed the
-   * same aggregation kernel the JSON scan uses (P1-B), so the SQL feed and
-   * the file feed answer byte-identical statistics.
+   * extracted from state_json with JSON1. Step rows carry the EFFECTIVE
+   * duration (monotonic measurement preferred, wall-clock span fallback, see
+   * `effectiveStepDurationMs`), so the SQL feed and the file feed answer
+   * byte-identical statistics for new AND legacy runs (P1-B / P1-②).
    */
   queryStatsProjection(
     workspace: string,
@@ -353,7 +355,9 @@ export class SqliteArchive {
                 json_extract(j.value, '$.step') AS step,
                 json_extract(j.value, '$.verdict.verdict') AS verdict,
                 json_extract(j.value, '$.attempts') AS attempts,
-                json_extract(j.value, '$.durationMs') AS durationMs
+                json_extract(j.value, '$.durationMs') AS durationMs,
+                json_extract(j.value, '$.startedAt') AS startedAt,
+                json_extract(j.value, '$.finishedAt') AS finishedAt
          FROM runs,
               json_each(runs.state_json, '$.stateOutcomes') AS o,
               json_each(o.value, '$.steps') AS j`,
@@ -364,6 +368,8 @@ export class SqliteArchive {
         verdict: unknown
         attempts: unknown
         durationMs: unknown
+        startedAt: unknown
+        finishedAt: unknown
       }>
     const failedSteps = db
       .prepare(
@@ -386,7 +392,15 @@ export class SqliteArchive {
           step: row.step,
           verdict: typeof row.verdict === 'string' ? row.verdict : null,
           attempts: typeof row.attempts === 'number' ? row.attempts : null,
-          durationMs: typeof row.durationMs === 'number' ? row.durationMs : null,
+          // Effective duration — the SAME definition the JSON feed uses
+          // (P1-②): a legacy row without durationMs falls back to its
+          // wall-clock span instead of dropping out of the histogram, so the
+          // SQL feed and the file feed cannot diverge on old data.
+          durationMs: effectiveStepDurationMs({
+            durationMs: typeof row.durationMs === 'number' ? row.durationMs : null,
+            startedAt: typeof row.startedAt === 'string' ? row.startedAt : null,
+            finishedAt: typeof row.finishedAt === 'string' ? row.finishedAt : null,
+          }),
         }]
       }),
       failedSteps: failedSteps.flatMap((row) => {

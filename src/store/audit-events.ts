@@ -63,18 +63,34 @@ export function runDurationMs(outcomes: StateOutcome[]): number | null {
 }
 
 /**
- * One step's duration, preferring the monotonic-clock measurement recorded at
- * the execution site (P1-E) and falling back to the wall-clock timestamp span
- * for runs persisted before the instrumentation landed (G7: old data has no
- * monotonic value — handled as missing). Shared by the stats kernel so both
- * feed paths use the same duration definition.
+ * One step's duration from its raw fields, preferring the monotonic-clock
+ * measurement recorded at the execution site (P1-E) and falling back to the
+ * wall-clock timestamp span for runs persisted before the instrumentation
+ * landed (G7: old data has no monotonic value — handled as missing). This is
+ * THE single duration definition: both stats feed paths (the JSON scan and
+ * the SQLite-archive projection) compute effective durations through it, so
+ * old rows without `durationMs` stay in the histogram identically on either
+ * side (P1-②). `stepDurationMs` is the `StepOutcome`-facing wrapper.
  */
-export function stepDurationMs(step: StepOutcome): number | null {
-  if (typeof step.durationMs === 'number' && Number.isFinite(step.durationMs) && step.durationMs >= 0) {
-    return step.durationMs
+export function effectiveStepDurationMs(fields: {
+  durationMs?: number | null
+  startedAt?: string | null
+  finishedAt?: string | null
+}): number | null {
+  if (typeof fields.durationMs === 'number' && Number.isFinite(fields.durationMs) && fields.durationMs >= 0) {
+    return fields.durationMs
   }
-  const span = Date.parse(step.finishedAt) - Date.parse(step.startedAt)
+  const span = Date.parse(fields.finishedAt ?? '') - Date.parse(fields.startedAt ?? '')
   return Number.isFinite(span) && span >= 0 ? span : null
+}
+
+/** One step's duration, from its `StepOutcome` (see `effectiveStepDurationMs`). */
+export function stepDurationMs(step: StepOutcome): number | null {
+  return effectiveStepDurationMs({
+    durationMs: step.durationMs,
+    startedAt: step.startedAt,
+    finishedAt: step.finishedAt,
+  })
 }
 
 /**

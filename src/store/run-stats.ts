@@ -250,7 +250,7 @@ export interface RunStatsProjection {
   /** One row per archived run; status rides along so the kernel can count. */
   runs: Array<{ startedAt: string; finishedAt: string | null; status: string }>
   stateVerdicts: Array<{ state: string; verdict: string; count: number }>
-  /** Raw step rows extracted from state_json (JSON1). */
+  /** Step rows extracted from state_json (JSON1) with EFFECTIVE durations. */
   steps?: Array<{ state: string; step: string; verdict: string | null; attempts: number | null; durationMs: number | null }>
   /** Raw failed-step rows extracted from state_json (JSON1). */
   failedSteps?: Array<{ state: string; step: string; attempts: number | null }>

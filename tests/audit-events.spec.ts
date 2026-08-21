@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { RunState } from '../src/engine/types.ts'
 import {
   auditEvent,
+  effectiveStepDurationMs,
   EMPTY_PROGRESS_TRACK,
   progressAuditEvents,
   runDurationMs,
@@ -128,5 +129,25 @@ describe('runDurationMs / sha256Text', () => {
     expect(sha256Text('{"a":1}')).toBe(sha256Text('{"a":1}'))
     expect(sha256Text('{"a":1}')).not.toBe(sha256Text('{"a":2}'))
     expect(sha256Text('x')).toMatch(/^[0-9a-f]{64}$/)
+  })
+})
+
+describe('effectiveStepDurationMs (P1-② shared duration definition)', () => {
+  const span = { startedAt: '2026-08-20T10:00:00.000Z', finishedAt: '2026-08-20T10:00:10.000Z' }
+
+  it('prefers the monotonic measurement when present (0 is valid)', () => {
+    expect(effectiveStepDurationMs({ ...span, durationMs: 42 })).toBe(42)
+    expect(effectiveStepDurationMs({ ...span, durationMs: 0 })).toBe(0)
+  })
+
+  it('falls back to the wall-clock span for legacy rows without durationMs', () => {
+    expect(effectiveStepDurationMs(span)).toBe(10_000)
+  })
+
+  it('rejects negative / non-finite monotonic values and unusable timestamps', () => {
+    expect(effectiveStepDurationMs({ ...span, durationMs: -5 })).toBe(10_000)
+    expect(effectiveStepDurationMs({ ...span, durationMs: Number.NaN })).toBe(10_000)
+    expect(effectiveStepDurationMs({ startedAt: null, finishedAt: null })).toBeNull()
+    expect(effectiveStepDurationMs({ startedAt: 'garbage', finishedAt: 'garbage' })).toBeNull()
   })
 })
