@@ -16,6 +16,7 @@ import { readFile, readdir } from 'node:fs/promises'
 import { isAbsolute, join, resolve } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { apiRunnerParent, defaultHostServices, type HostServices } from './host-services.js'
 import {
@@ -59,6 +60,28 @@ export type { AceRunHandle, RunMode } from './run-lifecycle.js'
 export type { RunStreamSnapshot } from './run-registry.js'
 import type { AceRunHandle, RunMode } from './run-lifecycle.js'
 import type { RunStreamSnapshot } from './run-registry.js'
+
+/**
+ * Inject a one-off notice into the parent session's transcript (best-effort).
+ * REST-started runs otherwise leave no trace in the conversation — the workbench
+ * runs them without a slash command — so the start/end notice is the record.
+ * `form: 'notice'` renders as a collapsed transcript row; `inject` queues the
+ * context without waking the agent loop, so it never triggers a reply.
+ */
+function notifyRun(parent: Agent, text: string): void {
+  const inject = (parent as unknown as { inject?: (message: unknown) => void }).inject
+  if (typeof inject !== 'function') return
+  try {
+    inject(
+      createUserMessage({
+        content: [{ type: 'text', text }],
+        source: { kind: 'plugin', plugin: 'dsh-ace-harness', form: 'notice', summary: text },
+      }),
+    )
+  } catch {
+    // Notification is best-effort; a synthetic/absent parent has no inject.
+  }
+}
 
 /** Deployment-tunable service options; set from the plugin Config. */
 export interface AceHarnessConfig {
@@ -624,21 +647,38 @@ export default class AceHarnessService extends Service {
       workflow = { config: instantiated.config, configFile: input.workflowRef }
     }
     let parent: Agent
-    if (input.sessionId !== undefined && input.sessionId !== '') {
-      parent = this.requireLiveRoot(input.sessionId)
+    const sessionId = input.sessionId !== undefined && input.sessionId !== '' ? input.sessionId : undefined
+    if (sessionId !== undefined) {
+      parent = this.requireLiveRoot(sessionId)
     } else {
       if (input.mode === 'job') {
         throw new Error('mode=job 需要 sessionId：后台作业必须挂在真实会话上')
       }
       parent = apiRunnerParent(input.workspace)
     }
-    return this.startRun({
+    const handle = await this.startRun({
       parent,
       signal: new AbortController().signal,
       workflow,
       inputs: input.values,
       mode: input.mode ?? 'foreground',
     })
+    // REST runs carry no slash command into the chat, so record the start and
+    // the eventual end as transcript notices on the owning session.
+    if (sessionId !== undefined) {
+      const workflowName = workflow.config.workflow.name
+      notifyRun(parent, `🚀 已启动工作流「${workflowName}」，运行 ${handle.runId}，进度见「工作流」侧边栏`)
+      void handle.result.then(
+        (result) => {
+          notifyRun(
+            parent,
+            `✅ 工作流「${workflowName}」运行结束：${result.status}${result.verdict ? ` / ${result.verdict}` : ''}`,
+          )
+        },
+        () => {},
+      )
+    }
+    return handle
   }
 
   /** Live root sessions that can host session-bound runs (approval gates work). */

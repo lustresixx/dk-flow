@@ -656,6 +656,18 @@ interface TopologyNodeData extends Record<string, unknown> {
   isFinal: boolean
   verdict: string | null
   current: boolean
+  durationMs: number | null
+}
+
+/** Human duration: `1.2s`, `3m 05s`, `—` when unknown. */
+function formatDuration(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined || !Number.isFinite(ms)) return '—'
+  if (ms < 1000) return `${Math.round(ms)}ms`
+  const seconds = Math.round(ms / 1000)
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  const rest = seconds % 60
+  return rest === 0 ? `${minutes}m` : `${minutes}m ${rest}s`
 }
 
 function TopologyNode(props: NodeProps<Node<TopologyNodeData>>): JSX.Element {
@@ -676,6 +688,7 @@ function TopologyNode(props: NodeProps<Node<TopologyNodeData>>): JSX.Element {
           {data.verdict === 'success' || data.verdict === 'pass' ? '✓' : data.verdict === 'fail' ? '✗' : '?'}
         </span>
       ) : null}
+      <span className={styles.topologyDuration}>{formatDuration(data.durationMs)}</span>
       <Handle type="source" position={Position.Right} />
     </div>
   )
@@ -691,6 +704,7 @@ function RunTopology(props: { run: StateRunDto }): JSX.Element | null {
   const nodes = useMemo<Node<TopologyNodeData>[]>(() => {
     if (!topology) return []
     const verdictByState = new Map(run.states.map((item) => [item.state, item.verdict]))
+    const durationByState = new Map(run.states.map((item) => [item.state, item.durationMs]))
     return topology.states.map((state, index) => ({
       id: state.name,
       type: 'topologyState',
@@ -701,6 +715,7 @@ function RunTopology(props: { run: StateRunDto }): JSX.Element | null {
         isFinal: state.isFinal,
         verdict: verdictByState.get(state.name) ?? null,
         current: state.name === run.currentState && ACTIVE_STATUSES.has(run.status),
+        durationMs: durationByState.get(state.name) ?? null,
       },
     }))
   }, [topology, run])
@@ -787,6 +802,7 @@ function RunDetail(props: {
               <span className={styles.verdictBadge} data-verdict={stateItem.verdict}>
                 {VERDICT_TEXT[stateItem.verdict] ?? stateItem.verdict}
               </span>
+              <span className={styles.stepRole}>耗时 {formatDuration(stateItem.durationMs)}</span>
               {stateItem.supervisorScore !== null ? <span className={styles.scoreBadge}>评分 {stateItem.supervisorScore}</span> : null}
             </div>
             <ol className={styles.stepTimeline}>
@@ -799,6 +815,7 @@ function RunDetail(props: {
                     <span className={styles.stepAgent}>{STEP_TYPE_TEXT[step.type] ?? step.type}</span>
                   )}
                   {step.role ? <span className={styles.stepRole}>{step.role}</span> : null}
+                  <span className={styles.stepRole}>耗时 {formatDuration(step.durationMs)}</span>
                   {step.attempts > 1 ? (
                     <span className={styles.stepRole} title="重试次数">重试 {step.attempts - 1} 次</span>
                   ) : null}

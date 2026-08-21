@@ -72,6 +72,8 @@ export interface StateRunDto {
     verdict: string
     supervisorScore: number | null
     supervisorNote: string | null
+    /** Wall-clock span in ms from the first step start to the last finish. */
+    durationMs: number | null
     steps: {
       step: string
       type: 'agent' | 'script' | 'subworkflow' | 'llm'
@@ -81,6 +83,7 @@ export interface StateRunDto {
       outputSummary: string
       data: unknown | null
       attempts: number
+      durationMs: number | null
     }[]
   }[]
 }

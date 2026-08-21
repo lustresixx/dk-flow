@@ -20,6 +20,8 @@ export type StepOutcomeDto = {
   outputSummary: string
   data: unknown
   attempts: number
+  /** Monotonic duration in ms when measured; null on legacy rows. */
+  durationMs: number | null
 }
 
 /** Whitelist projection of one step (state route shape). */
@@ -33,7 +35,19 @@ export function stepOutcomeDto(step: StepOutcome): StepOutcomeDto {
     outputSummary: step.outputSummary,
     data: step.data ?? null,
     attempts: step.attempts ?? 1,
+    durationMs: step.durationMs ?? null,
   }
+}
+
+/** Wall-clock span of one state, from its first step's start to its last finish. */
+function stateDurationMs(outcome: StateOutcome): number | null {
+  if (outcome.steps.length === 0) return null
+  const first = outcome.steps[0]!
+  const last = outcome.steps[outcome.steps.length - 1]!
+  const start = Date.parse(first.startedAt)
+  const end = Date.parse(last.finishedAt)
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null
+  return Math.max(0, end - start)
 }
 
 /** State row of the state route. */
@@ -42,6 +56,8 @@ export type StateOutcomeDto = {
   verdict: string
   supervisorScore: number | null
   supervisorNote: string | null
+  /** Wall-clock span in ms from the first step start to the last finish. */
+  durationMs: number | null
   steps: StepOutcomeDto[]
 }
 
@@ -52,6 +68,7 @@ export function stateOutcomeDto(outcome: StateOutcome): StateOutcomeDto {
     verdict: outcome.verdict.verdict,
     supervisorScore: outcome.supervisorScore ?? null,
     supervisorNote: outcome.supervisorNote ?? null,
+    durationMs: stateDurationMs(outcome),
     steps: outcome.steps.map(stepOutcomeDto),
   }
 }
