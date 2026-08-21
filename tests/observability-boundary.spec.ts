@@ -28,7 +28,7 @@ import type { EngineRunOptions, RunResult, RunState, StepExecutor, StepOutcome }
 import { settleEngineRun, type SettleRunEndDeps } from '../src/run-lifecycle.js'
 import { RunPersistence } from '../src/run-persistence.js'
 import { RunRegistry } from '../src/run-registry.js'
-import { stepDurationMs } from '../src/store/audit-events.js'
+import { effectiveStepDurationMs, stepDurationMs } from '../src/store/audit-events.js'
 import { aggregateRunStats, combineStatsProjection } from '../src/store/run-stats.js'
 import { StatsCache } from '../src/store/stats-cache.ts'
 import { loadRunState, saveRunState } from '../src/store/run-store.ts'
@@ -213,6 +213,37 @@ describe('step duration derivation (P1-E / G7)', () => {
   it('returns null when neither measurement is usable', () => {
     expect(stepDurationMs({ ...base, startedAt: 'garbage', finishedAt: 'garbage' })).toBeNull()
   })
+
+  it('delegates to effectiveStepDurationMs so the two feeds cannot re-split (P1-② caliber guard)', () => {
+    // P1-② root cause was two independent duration calibers (JSON fallback vs
+    // SQL raw extract). stepDurationMs is the StepOutcome-facing wrapper of the
+    // ONE shared definition; pin the delegation across the whole input matrix
+    // so any re-implementation drift fails here, before it can diverge the
+    // feeds again (the sqlite-archive DIVERGE pin would catch it later).
+    // The matrix covers the full input domain of the shared definition,
+    // including legacy rows where null / missing fields are the norm; the
+    // StepOutcome-facing wrapper receives the same data via a shape cast
+    // (StepOutcome's declared fields are stricter than persisted legacy rows).
+    type DurationInput = Parameters<typeof effectiveStepDurationMs>[0]
+    const matrix: Array<[DurationInput, number | null]> = [
+      [{ durationMs: 42 }, 42],
+      [{ durationMs: 0 }, 0],
+      [{ durationMs: -5 }, 10_000],
+      [{ durationMs: Number.NaN }, 10_000],
+      [{ durationMs: null }, 10_000],
+      [{ durationMs: Number.POSITIVE_INFINITY }, 10_000],
+      [{}, 10_000],
+      [{ startedAt: base.finishedAt }, 0],
+      [{ startedAt: 'garbage', finishedAt: 'garbage' }, null],
+      [{ startedAt: null, finishedAt: null }, null],
+    ]
+    for (const [overrides, expected] of matrix) {
+      const step = { ...base, ...overrides } as DurationInput
+      expect(effectiveStepDurationMs(step)).toBe(expected)
+      expect(stepDurationMs(step as StepOutcome)).toBe(effectiveStepDurationMs(step))
+      expect(stepDurationMs(step as StepOutcome)).toBe(expected)
+    }
+  })
 })
 
 describe('stats kernel boundaries (P0-B / P1-B)', () => {
@@ -327,6 +358,24 @@ describe('stats kernel boundaries (P0-B / P1-B)', () => {
     expect(stats.stepHotspots).toEqual([])
     expect(stats.failedStepHotspots).toEqual([])
     expect(stats.stepDurationPercentiles).toEqual({ p50: null, p95: null })
+  })
+
+  it('zeroes every stats field on a fresh (empty) workspace feed', () => {
+    // 需求③ /stats route on a brand-new workspace: the dashboard must render
+    // zeroed chips, an empty histogram and null percentiles — never throw.
+    const stats = aggregateRunStats([])
+    expect(stats.totalRuns).toBe(0)
+    expect(stats.byStatus).toEqual({})
+    expect(stats.avgDurationMs).toBeNull()
+    expect(stats.lastRunAt).toBeNull()
+    expect(stats.stateHotspots).toEqual([])
+    expect(stats.stepCount).toBe(0)
+    expect(stats.stepDurationBuckets.map((bucket) => bucket.count)).toEqual([0, 0, 0, 0, 0])
+    expect(stats.stepDurationPercentiles).toEqual({ p50: null, p95: null })
+    expect(stats.stepRetryCount).toBe(0)
+    expect(stats.stepRetryTotal).toBe(0)
+    expect(stats.stepHotspots).toEqual([])
+    expect(stats.failedStepHotspots).toEqual([])
   })
 })
 
