@@ -6,6 +6,7 @@
  * @module dsh-ace-harness/engine
  */
 import type { StateMachineState, WorkflowConfig } from '../dsl/types.js'
+import { hostname } from 'node:os'
 import { buildStateEvidence, buildStepEvidence } from './prompts.js'
 import {
   buildStepData,
@@ -60,6 +61,7 @@ export function createRunState(options: {
     },
     parentSessionId: options.parentSessionId,
     pid: process.pid,
+    hostId: hostname(),
   }
 }
 
@@ -93,6 +95,7 @@ export async function runStateMachine(options: EngineRunOptions): Promise<RunRes
   // The process that (re)starts this run is the live owner: refresh the pid so
   // a resume under a new process is not misread as abandoned by the old one.
   state.pid = process.pid
+  state.hostId = hostname()
 
   const persist = async (): Promise<void> => {
     state.updatedAt = now()

@@ -1,11 +1,11 @@
 import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { RunState } from '../src/engine/types.ts'
 import { stepDurationMs } from '../src/store/audit-events.ts'
 import { aggregateRunStats, combineStatsProjection } from '../src/store/run-stats.ts'
-import { appendAudit, normalizeStaleRun, saveRunState } from '../src/store/run-store.ts'
+import { appendAudit, normalizeStaleRun, PID_LIVE_GRACE_MS, saveRunState } from '../src/store/run-store.ts'
 import { SqliteArchive } from '../src/store/sqlite-archive.ts'
 import { readWorkspaceSettings, writeWorkspaceSettings } from '../src/store/workspace-settings.ts'
 
@@ -322,6 +322,84 @@ describe('SqliteArchive', () => {
     expect(sqlStats).toEqual(jsonStats)
     expect(sqlStats.byStatus).toEqual({ crashed: 1, running: 1, completed: 1 })
     expect(sqlStats.totalRuns).toBe(3)
+    archive.close()
+  })
+
+  it('applies the pid-live exemption identically in BOTH feeds (P1-1/P1-2 pid-equivalence pin)', () => {
+    const archive = new SqliteArchive()
+    const NOW = Date.parse('2026-08-20T10:20:00.000Z')
+    const HOST = hostname()
+    // Stale, owned by THIS machine's live process, within the grace window —
+    // a slow step. Both feeds keep it `running`.
+    const liveSlow = makeRun('run-live-slow', {
+      status: 'running',
+      startedAt: '2026-08-20T09:00:00.000Z',
+      updatedAt: '2026-08-20T09:09:00.000Z', // STALE_RUN_MS + 60s idle
+      finishedAt: null,
+      pid: process.pid,
+      hostId: HOST,
+    })
+    // Stale, live pid, BEYOND the grace window — the run is hung. Both feeds
+    // report `crashed` (hang detection restored, P1-1).
+    const hung = makeRun('run-hung', {
+      status: 'running',
+      startedAt: '2026-08-19T22:00:00.000Z',
+      updatedAt: '2026-08-19T22:00:00.000Z', // STALE_RUN_MS + PID_LIVE_GRACE_MS + 1min idle
+      finishedAt: null,
+      pid: process.pid,
+      hostId: HOST,
+    })
+    // Stale with a locally-alive pid recorded by ANOTHER machine: the pid can
+    // only be an unrelated local process — never trusted (P1-2 cross-machine).
+    const foreign = makeRun('run-foreign', {
+      status: 'running',
+      startedAt: '2026-08-20T09:00:00.000Z',
+      updatedAt: '2026-08-20T09:09:00.000Z',
+      finishedAt: null,
+      pid: process.pid,
+      hostId: 'some-other-machine',
+    })
+    // Stale with a dead pid: abandoned — crashed in both feeds.
+    const dead = makeRun('run-dead', {
+      status: 'running',
+      startedAt: '2026-08-20T09:00:00.000Z',
+      updatedAt: '2026-08-20T09:09:00.000Z',
+      finishedAt: null,
+      pid: 999_999_999,
+      hostId: HOST,
+    })
+    const runs = [liveSlow, hung, foreign, dead]
+    for (const run of runs) archive.archiveRun(workspace, '.ace-workflows', run)
+
+    const sqlStats = combineStatsProjection(archive.queryStatsProjection(workspace, '.ace-workflows', NOW))
+    const jsonStats = aggregateRunStats(
+      runs.map((state) => {
+        const normalized = normalizeStaleRun(state, NOW)
+        return {
+          status: normalized.status,
+          startedAt: normalized.startedAt,
+          finishedAt: normalized.finishedAt,
+          states: normalized.stateOutcomes.map((outcome) => ({ state: outcome.state, verdict: outcome.verdict.verdict })),
+          steps: normalized.stateOutcomes.flatMap((outcome) =>
+            outcome.steps.map((step) => ({
+              state: step.state,
+              step: step.step,
+              verdict: step.verdict?.verdict ?? null,
+              attempts: step.attempts ?? null,
+              durationMs: stepDurationMs(step),
+            })),
+          ),
+          failedSteps: (normalized.failedSteps ?? []).map((failed) => ({
+            state: failed.state,
+            step: failed.step,
+            attempts: failed.attempts ?? null,
+          })),
+        }
+      }),
+    )
+    expect(sqlStats).toEqual(jsonStats)
+    expect(sqlStats.byStatus).toEqual({ running: 1, crashed: 3 })
+    expect(sqlStats.totalRuns).toBe(4)
     archive.close()
   })
 

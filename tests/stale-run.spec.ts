@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeRunStatus, normalizeStaleRun, STALE_RUN_MS } from '../src/store/run-store.js'
+import { normalizeRunStatus, normalizeStaleRun, PID_LIVE_GRACE_MS, STALE_RUN_MS } from '../src/store/run-store.js'
 import type { RunState } from '../src/engine/types.js'
 
 const base: RunState = {
@@ -89,5 +89,27 @@ describe('normalizeRunStatus (P1-2 shared single stale rule)', () => {
   it('applies the stale rule to any non-terminal status (waiting-human included)', () => {
     expect(normalizeRunStatus('waiting-human', stale, NOW)).toBe('crashed')
     expect(normalizeRunStatus('waiting-human', fresh, NOW)).toBe('waiting-human')
+  })
+
+  it('keeps a non-terminal status running when a live owner is within the grace window', () => {
+    const withinGrace = new Date(NOW - STALE_RUN_MS - 60_000).toISOString()
+    expect(normalizeRunStatus('running', withinGrace, NOW, true)).toBe('running')
+  })
+
+  it('crashes a non-terminal status when a live owner outlives the grace window (P1-1 cap)', () => {
+    const beyondGrace = new Date(NOW - STALE_RUN_MS - PID_LIVE_GRACE_MS - 1).toISOString()
+    expect(normalizeRunStatus('running', beyondGrace, NOW, true)).toBe('crashed')
+  })
+
+  it('keeps a non-terminal status AT the grace boundary (strict >)', () => {
+    const atGrace = new Date(NOW - STALE_RUN_MS - PID_LIVE_GRACE_MS).toISOString()
+    expect(normalizeRunStatus('running', atGrace, NOW, true)).toBe('running')
+  })
+
+  it('applies the grace cap to any non-terminal status (waiting-human included)', () => {
+    const beyondGrace = new Date(NOW - STALE_RUN_MS - PID_LIVE_GRACE_MS - 1).toISOString()
+    expect(normalizeRunStatus('waiting-human', beyondGrace, NOW, true)).toBe('crashed')
+    const withinGrace = new Date(NOW - STALE_RUN_MS - 60_000).toISOString()
+    expect(normalizeRunStatus('waiting-human', withinGrace, NOW, true)).toBe('waiting-human')
   })
 })

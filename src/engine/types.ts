@@ -116,6 +116,15 @@ export interface RunState {
    * matter how long its current step takes to persist.
    */
   pid?: number
+  /**
+   * Machine identity (hostname) that recorded `pid`. The stale-run
+   * normalization only trusts a live owner pid when it was recorded by the
+   * CURRENT machine: a pid recorded by another machine can only collide with
+   * an unrelated local process, and same-machine pid reuse stays bounded by
+   * the grace window in `normalizeRunStatus`. Refreshed on every (re)start
+   * together with `pid`.
+   */
+  hostId?: string
 }
 
 /** Terminal result of a whole run. */

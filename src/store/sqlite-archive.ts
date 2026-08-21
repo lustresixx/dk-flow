@@ -13,7 +13,7 @@ import { DatabaseSync } from 'node:sqlite'
 import type { RunState } from '../engine/types.js'
 import { effectiveStepDurationMs } from './audit-events.js'
 import { runDir, runsRoot, runStateDir } from './paths.js'
-import { isPidAlive, normalizeRunStatus } from './run-store.js'
+import { isOwnerAlive, normalizeRunStatus } from './run-store.js'
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS runs (
@@ -344,17 +344,25 @@ export class SqliteArchive {
     // (aggregateWorkspaceStats counts `runs`, not this map), so the two can
     // never disagree about a zombie run.
     const runs = db
-      .prepare("SELECT started_at, finished_at, status, updated_at, json_extract(state_json, '$.pid') AS pid FROM runs")
+      .prepare(
+        "SELECT started_at, finished_at, status, updated_at, json_extract(state_json, '$.pid') AS pid, json_extract(state_json, '$.hostId') AS hostId FROM runs",
+      )
       .all() as unknown as Array<{
         started_at: string
         finished_at: string | null
         status: string
         updated_at: string
         pid: number | null
+        hostId: string | null
       }>
+    // P1-1/P1-2 adjudication: the pid-live exemption applies only to a
+    // SAME-HOST live owner — the exact trust rule the JSON file scan uses
+    // (isOwnerAlive), so the two feeds cannot split over the pid branch.
+    const ownerAlive = (row: { pid: number | null; hostId: string | null }): boolean =>
+      isOwnerAlive({ pid: row.pid ?? undefined, hostId: row.hostId ?? undefined })
     const statusCounts = new Map<string, number>()
     for (const row of runs) {
-      const status = normalizeRunStatus(row.status, row.updated_at, now, row.pid !== null && isPidAlive(row.pid))
+      const status = normalizeRunStatus(row.status, row.updated_at, now, ownerAlive(row))
       statusCounts.set(status, (statusCounts.get(status) ?? 0) + 1)
     }
     const stateVerdicts = db
@@ -403,9 +411,10 @@ export class SqliteArchive {
         finishedAt: row.finished_at,
         // Same stale rule as the file scan (P1-2): abandoned non-terminal
         // runs count as `crashed`, exactly like the JSON feed's
-        // `normalizeStaleRun`, so /stats cannot split by feed. A live pid
-        // keeps a slow-but-alive run `running`.
-        status: normalizeRunStatus(row.status, row.updated_at, now, row.pid !== null && isPidAlive(row.pid)),
+        // `normalizeStaleRun`, so /stats cannot split by feed. A same-host
+        // live owner keeps a slow-but-alive run `running` within the bounded
+        // grace window; a hung run still reads `crashed` after it (P1-1).
+        status: normalizeRunStatus(row.status, row.updated_at, now, ownerAlive(row)),
       })),
       stateVerdicts: stateVerdicts
         .filter((row) => typeof row.state === 'string' && typeof row.verdict === 'string')
