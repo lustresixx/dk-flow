@@ -147,3 +147,28 @@ export interface StreamSnapshotDto {
     finished: boolean
   }[]
 }
+
+/**
+ * Workspace run statistics (GET /plugins/dsh-ace-harness/stats). SYNC SOURCE:
+ * the host builds this with the aggregation kernel in `src/store/run-stats.ts`
+ * (`WorkspaceRunStats`) plus `archiveEnabled` / `activeRuns` appended by
+ * `service.workspaceStats`. Mirror the field set here when run-stats.ts
+ * changes; the /stats route is the run-records page's diagnostics consumer
+ * (P1-D).
+ */
+export interface WorkspaceStatsDto {
+  totalRuns: number
+  byStatus: Record<string, number>
+  avgDurationMs: number | null
+  lastRunAt: string | null
+  stateHotspots: { state: string; verdict: string; count: number }[]
+  stepCount: number
+  stepDurationBuckets: { label: string; minMs: number; maxMs: number | null; count: number }[]
+  stepDurationPercentiles: { p50: number | null; p95: number | null }
+  stepRetryCount: number
+  stepRetryTotal: number
+  stepHotspots: { state: string; step: string; verdict: string; count: number }[]
+  failedStepHotspots: { state: string; step: string; count: number }[]
+  archiveEnabled: boolean
+  activeRuns: number
+}

@@ -18,7 +18,7 @@ import {
 import { EditorPane } from './WorkflowEditor.tsx'
 import { blankWorkflowYaml } from './workflow-model.ts'
 import { ACTIVE_STATUSES, route, STATUS_TEXT, STEP_TYPE_TEXT, VERDICT_TEXT } from './run-meta.ts'
-import type { AceStateDto, StateRunDto, StateTemplateDto, StateWorkflowDto } from './types.ts'
+import type { AceStateDto, StateRunDto, StateTemplateDto, StateWorkflowDto, WorkspaceStatsDto } from './types.ts'
 import styles from './Workbench.module.css'
 
 type Tab = 'templates' | 'workflows' | 'runs'
@@ -363,6 +363,10 @@ export function Workbench(props: WorkbenchProps): JSX.Element {
                 submit={submit}
                 refresh={() => { refreshRun(run.runId) }}
               />
+            ) : tab === 'runs' ? (
+              // 需求③: the run-records page consumes /stats — failure hotspots
+              // and the step-duration distribution (P1-D turns the route live).
+              <StatsPanel workspacePath={firstWorkspace?.path ?? ''} />
             ) : (
               <div className={styles.welcome}>
                 <img src={LOGO} alt="ACE" className={styles.welcomeLogo} />
@@ -762,6 +766,137 @@ function RunDetail(props: {
           刷新
         </button>
       </div>
+    </div>
+  )
+}
+
+/**
+ * Run-records diagnostics (需求③ / P1-D): polls the /stats route of the
+ * selected workspace and renders the failure hotspots (step-level and
+ * failed-step) and the step-duration distribution — the consumer that turns
+ * the previously UI-dead /stats route live.
+ */
+function StatsPanel(props: { workspacePath: string }): JSX.Element {
+  const { workspacePath } = props
+  const [stats, setStats] = useState<WorkspaceStatsDto | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    if (!workspacePath) {
+      setStats(null)
+      return
+    }
+    let alive = true
+    const load = async (): Promise<void> => {
+      try {
+        const response = await fetch(
+          `/plugins/dsh-ace-harness/stats?workspace=${encodeURIComponent(workspacePath)}`,
+          { cache: 'no-store' },
+        )
+        if (!response.ok) {
+          if (alive) setError(`统计路由返回 HTTP ${response.status}`)
+          return
+        }
+        const body = (await response.json()) as WorkspaceStatsDto
+        if (alive) {
+          setStats(body)
+          setError(null)
+        }
+      } catch (err) {
+        if (alive) setError(`无法读取运行统计：${(err as Error).message}`)
+      }
+    }
+    void load()
+    // Aggregates are cached server-side for 10s; poll at the same cadence.
+    const timer = window.setInterval(() => { void load() }, 10_000)
+    return () => {
+      alive = false
+      window.clearInterval(timer)
+    }
+  }, [workspacePath])
+
+  if (!workspacePath) {
+    return <div className={styles.welcome}><h2>运行统计</h2><p>暂无已知工作区，无法读取统计。</p></div>
+  }
+  if (error) {
+    return (
+      <div className={styles.detail}>
+        <h2 className={styles.detailTitle}>运行统计</h2>
+        <p className={styles.errorText}>{error}</p>
+      </div>
+    )
+  }
+  if (!stats) {
+    return <div className={styles.detail}><h2 className={styles.detailTitle}>运行统计</h2><p className={styles.detailDesc}>加载中…</p></div>
+  }
+
+  const maxBucketCount = Math.max(1, ...stats.stepDurationBuckets.map((bucket) => bucket.count))
+  const statusChips = Object.entries(stats.byStatus).map(([status, count]) => (
+    <span key={status} className={styles.statsChip} data-status={status}>
+      {STATUS_TEXT[status] ?? status}: {count}
+    </span>
+  ))
+  const pct = (ms: number | null): string => (ms === null ? '—' : ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`)
+  return (
+    <div className={styles.detail}>
+      <h2 className={styles.detailTitle}>
+        运行统计
+        <span className={styles.statsBadge}>
+          {stats.totalRuns} 次运行{stats.activeRuns > 0 ? ` · ${stats.activeRuns} 执行中` : ''}
+        </span>
+      </h2>
+      <h3 className={styles.sectionTitle}>状态分布</h3>
+      <div className={styles.statsChips}>{statusChips}</div>
+
+      <h3 className={styles.sectionTitle}>步骤耗时分布（{stats.stepCount} 步）</h3>
+      <div className={styles.histogram}>
+        {stats.stepDurationBuckets.map((bucket) => (
+          <div key={bucket.label} className={styles.histogramRow}>
+            <span className={styles.histogramLabel}>{bucket.label}</span>
+            <div className={styles.histogramTrack}>
+              <div
+                className={styles.histogramFill}
+                style={{ width: `${(bucket.count / maxBucketCount) * 100}%` }}
+              />
+            </div>
+            <span className={styles.histogramCount}>{bucket.count}</span>
+          </div>
+        ))}
+      </div>
+      <p className={styles.statsHint}>
+        p50 {pct(stats.stepDurationPercentiles.p50)} · p95 {pct(stats.stepDurationPercentiles.p95)} · 重试{' '}
+        {stats.stepRetryCount} 步 / {stats.stepRetryTotal} 次
+      </p>
+
+      <h3 className={styles.sectionTitle}>失败热点</h3>
+      {stats.stepHotspots.length === 0 && stats.failedStepHotspots.length === 0 ? (
+        <p className={styles.statsHint}>暂无失败记录</p>
+      ) : (
+        <ul className={styles.hotspotList}>
+          {stats.stepHotspots.map((hotspot) => (
+            <li key={`${hotspot.state}/${hotspot.step}/${hotspot.verdict}`} className={styles.hotspotItem}>
+              <span className={styles.hotspotName}>
+                {hotspot.state}/{hotspot.step}
+              </span>
+              <span className={styles.verdictBadge} data-verdict={hotspot.verdict}>
+                {VERDICT_TEXT[hotspot.verdict] ?? hotspot.verdict}
+              </span>
+              <span className={styles.hotspotCount}>{hotspot.count} 次</span>
+            </li>
+          ))}
+          {stats.failedStepHotspots.map((hotspot) => (
+            <li key={`${hotspot.state}/${hotspot.step}`} className={styles.hotspotItem}>
+              <span className={styles.hotspotName}>
+                {hotspot.state}/{hotspot.step}
+              </span>
+              <span className={styles.verdictBadge} data-verdict="fail">执行失败</span>
+              <span className={styles.hotspotCount}>{hotspot.count} 次</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className={styles.statsHint}>
+        {stats.archiveEnabled ? '数据源：SQLite 归档' : '数据源：运行文件'} · 最近运行 {stats.lastRunAt ?? '—'}
+      </p>
     </div>
   )
 }

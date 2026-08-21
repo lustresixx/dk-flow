@@ -653,3 +653,122 @@
   border-top: 1px dashed rgba(255, 255, 255, 0.12);
   padding-top: 6px;
 }
+
+/* --- Run-records statistics panel (P1-D / 需求③) --- */
+.statsBadge {
+  margin-left: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #9a9ab0;
+  vertical-align: middle;
+}
+
+.statsChips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.statsChip {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 12px;
+}
+
+.statsChip[data-status='failed'],
+.statsChip[data-status='crashed'] {
+  border-color: rgba(229, 72, 77, 0.5);
+  color: #ffb3b3;
+}
+
+.statsChip[data-status='completed'] {
+  border-color: rgba(18, 161, 80, 0.5);
+  color: #86efac;
+}
+
+.histogram {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.histogramRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.histogramLabel {
+  width: 52px;
+  color: #9a9ab0;
+  flex-shrink: 0;
+  text-align: right;
+}
+
+.histogramTrack {
+  flex: 1;
+  height: 14px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+}
+
+.histogramFill {
+  height: 100%;
+  border-radius: 7px;
+  background: linear-gradient(90deg, #4f5bd5, #6d5bd5);
+  min-width: 2px;
+  transition: width 200ms ease;
+}
+
+.histogramCount {
+  width: 28px;
+  color: #e6e6ee;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.statsHint {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  color: #9a9ab0;
+}
+
+.hotspotList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hotspotItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  font-size: 12.5px;
+}
+
+.hotspotName {
+  font-weight: 600;
+  font-family: 'Cascadia Code', Consolas, 'Courier New', monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.hotspotCount {
+  margin-left: auto;
+  color: #9a9ab0;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
