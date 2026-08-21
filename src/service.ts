@@ -36,6 +36,7 @@ import { workspaceRoot } from './store/paths.js'
 import { listRunStates, loadRunState } from './store/run-store.js'
 import { SqliteArchive, type ArchivedAuditRow, type ArchivedRunRow } from './store/sqlite-archive.js'
 import { aggregateRunStats, combineStatsProjection, type WorkspaceRunStats } from './store/run-stats.js'
+import { StatsCache } from './store/stats-cache.js'
 import { stepDurationMs } from './store/audit-events.js'
 import { readWorkspaceSettings, writeWorkspaceSettings } from './store/workspace-settings.js'
 import { deleteWorkflow, listWorkflows, loadWorkflow, saveWorkflow, type WorkflowEntry } from './store/workflow-store.js'
@@ -111,6 +112,15 @@ export interface WorkflowScriptEntry {
 /** TTL of the archived-count badge cache (P1-2⑥; badge may lag this long). */
 const ARCHIVED_COUNT_TTL_MS = 10_000
 
+/**
+ * TTL of the workspace-stats aggregation cache (P2). Write-through
+ * invalidation on every persist keeps the route fresh (the e2e asserts
+ * `stats.totalRuns` equals the archive total right after a wave); the TTL is
+ * only a fallback for mutations that bypass the persist pipeline. The panel
+ * polls every few seconds, so 10s staleness is well inside tolerance.
+ */
+const STATS_CACHE_TTL_MS = 10_000
+
 /** Result of verifying one workflow step in isolation. */
 export interface TestStepResult {
   state: string
@@ -147,6 +157,8 @@ export default class AceHarnessService extends Service {
   private readonly archive = new SqliteArchive()
   /** TTL cache for the state route's archived-count badge (P1-2⑥). */
   private readonly archivedCountCache = new Map<string, { at: number; value: number }>()
+  /** Per-workspace stats aggregation cache (P2; write-through invalidated). */
+  private readonly statsCache = new StatsCache<WorkspaceRunStats>(STATS_CACHE_TTL_MS)
   /** Shared per-run maps (active controllers / streams / audit cursors). */
   private readonly registry = new RunRegistry()
   /** The per-run persist pipeline. */
@@ -177,6 +189,9 @@ export default class AceHarnessService extends Service {
       runDirName: this.config.runDirName,
       sqliteEnabled: (workspace) => this.sqliteEnabled(workspace),
       emitRunUpdated: (payload) => this.ctx.emit('ace/run-updated', payload),
+      // P2 write-through: every persisted snapshot invalidates the stats
+      // aggregation of its workspace so the next /stats read is fresh.
+      invalidateStats: (workspace) => this.statsCache.invalidate(workspace),
     })
     this.lifecycle = new RunLifecycle({
       ctx: this.ctx,
@@ -663,6 +678,9 @@ export default class AceHarnessService extends Service {
     enabled: boolean,
   ): Promise<{ enabled: boolean; backfilled: number; dbFile: string }> {
     await writeWorkspaceSettings(workspace, this.config.runDirName, { sqliteArchive: enabled })
+    // The stats feed switches (JSON scan ⇄ SQL projection): drop any cached
+    // aggregation so the next read reflects the new feed immediately.
+    this.statsCache.invalidate(workspace)
     let backfilled = 0
     if (enabled) backfilled = await this.archive.backfill(workspace, this.config.runDirName)
     return { enabled, backfilled, dbFile: this.archive.dbFile(workspace, this.config.runDirName) }
@@ -703,35 +721,42 @@ export default class AceHarnessService extends Service {
   /** Workspace run statistics (archive SQL when enabled, JSON scan otherwise). */
   async workspaceStats(workspace: string): Promise<WorkspaceRunStats & { archiveEnabled: boolean; activeRuns: number }> {
     const enabled = await this.sqliteEnabled(workspace)
-    const stats: WorkspaceRunStats = enabled
-      ? combineStatsProjection(this.archive.queryStatsProjection(workspace, this.config.runDirName))
-      : aggregateRunStats(
-          (await listRunStates(workspace, this.config.runDirName)).map((state) => ({
-            status: state.status,
-            startedAt: state.startedAt,
-            finishedAt: state.finishedAt,
-            states: state.stateOutcomes.map((outcome) => ({
-              state: outcome.state,
-              verdict: outcome.verdict.verdict,
-            })),
-            // Step-level feed (P0-B): completed steps with effective durations
-            // plus the failure history (steps that threw have no StepOutcome).
-            steps: state.stateOutcomes.flatMap((outcome) =>
-              outcome.steps.map((step) => ({
-                state: step.state,
-                step: step.step,
-                verdict: step.verdict?.verdict ?? null,
-                attempts: step.attempts ?? null,
-                durationMs: stepDurationMs(step),
+    // P2: aggregate once per TTL per workspace; the persist pipeline
+    // invalidates the key on every write so the cache never hides a fresh
+    // run. archiveEnabled / activeRuns stay live (not cached).
+    const cached = this.statsCache.get(workspace)
+    const stats: WorkspaceRunStats =
+      cached ??
+      (enabled
+        ? combineStatsProjection(this.archive.queryStatsProjection(workspace, this.config.runDirName))
+        : aggregateRunStats(
+            (await listRunStates(workspace, this.config.runDirName)).map((state) => ({
+              status: state.status,
+              startedAt: state.startedAt,
+              finishedAt: state.finishedAt,
+              states: state.stateOutcomes.map((outcome) => ({
+                state: outcome.state,
+                verdict: outcome.verdict.verdict,
               })),
-            ),
-            failedSteps: (state.failedSteps ?? []).map((failed) => ({
-              state: failed.state,
-              step: failed.step,
-              attempts: failed.attempts ?? null,
+              // Step-level feed (P0-B): completed steps with effective durations
+              // plus the failure history (steps that threw have no StepOutcome).
+              steps: state.stateOutcomes.flatMap((outcome) =>
+                outcome.steps.map((step) => ({
+                  state: step.state,
+                  step: step.step,
+                  verdict: step.verdict?.verdict ?? null,
+                  attempts: step.attempts ?? null,
+                  durationMs: stepDurationMs(step),
+                })),
+              ),
+              failedSteps: (state.failedSteps ?? []).map((failed) => ({
+                state: failed.state,
+                step: failed.step,
+                attempts: failed.attempts ?? null,
+              })),
             })),
-          })),
-        )
+          ))
+    if (!cached) this.statsCache.set(workspace, stats)
     return { ...stats, archiveEnabled: enabled, activeRuns: this.registry.counts().activeRuns }
   }
 

@@ -204,6 +204,25 @@ describe('RunPersistence.makePersist', () => {
     expect(events[0]).toMatchObject({ event: 'state-end', state: '状态二' })
   })
 
+  it('invalidates the workspace stats cache on every persist (P2 write-through)', async () => {
+    const registry = new RunRegistry()
+    const invalidated: string[] = []
+    const persistence = new RunPersistence({
+      archive,
+      registry,
+      runDirName: RUN_DIR_NAME,
+      sqliteEnabled: async () => false,
+      emitRunUpdated: () => {},
+      invalidateStats: (workspace) => invalidated.push(workspace),
+    })
+    const persist = persistence.makePersist(workspace, 'run-1')
+    await persist(makeRun('run-1', { stateOutcomes: [], completedSteps: 0 }))
+    await persist(makeRun('run-1'))
+    // Every persisted snapshot invalidates — the cache can never hide a fresh
+    // run from the next stats read; the TTL is only a fallback.
+    expect(invalidated).toEqual([workspace, workspace])
+  })
+
   it('projects the snapshot onto the live stream when one is registered', async () => {
     const registry = new RunRegistry()
     registry.openStream({ runId: 'run-1', workflowName: '演示', config: makeConfig(), totalSteps: 1 })

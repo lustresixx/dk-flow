@@ -35,6 +35,12 @@ export interface RunPersistenceDeps {
   sqliteEnabled(workspace: string): Promise<boolean>
   /** Emit the frozen `ace/run-updated` cordis event. */
   emitRunUpdated(payload: RunUpdatedPayload): void
+  /**
+   * Write-through invalidation of per-workspace aggregate caches (P2): fired
+   * after every persisted snapshot so a fresh run/status change is visible to
+   * the next stats read; the stats cache TTL is only a fallback.
+   */
+  invalidateStats?(workspace: string): void
 }
 
 /**
@@ -169,6 +175,10 @@ export class RunPersistence {
   /** Persist one run snapshot through the full pipeline. */
   private async persistSnapshot(workspace: string, runId: string, runState: RunState): Promise<void> {
     await saveRunState(workspace, runState, this.deps.runDirName)
+    // Write-through cache invalidation (P2): the JSON store changed, so any
+    // per-workspace aggregate cache must recompute on the next read. The TTL
+    // only covers mutations that bypass this pipeline.
+    this.deps.invalidateStats?.(workspace)
     // Opt-in SQLite mirror: long-term, queryable evidence chain. Queued off
     // the hot path (P1-2⑥); a mirror failure must never break the run.
     this.enqueueArchiveWrite(workspace, () =>
