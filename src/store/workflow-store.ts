@@ -100,18 +100,48 @@ export async function loadWorkflow(
   return null
 }
 
+/** Every existing instance base name across project + personal roots. */
+async function existingWorkflowBases(workspace: string): Promise<Set<string>> {
+  const bases = new Set<string>()
+  for (const name of await listYamlFiles(projectWorkflowsDir(workspace))) {
+    bases.add(basename(name, '.yaml'))
+  }
+  for (const name of await listYamlFiles(personalWorkflowsDir())) {
+    bases.add(basename(name, '.yaml'))
+  }
+  return bases
+}
+
+/**
+ * Resolve a non-colliding instance base name: `base` stays as-is when free,
+ * otherwise `base-2`, `base-3`, … This is the auto-numbering for workflow
+ * creation — instantiating the same template twice yields numbered siblings
+ * instead of overwriting.
+ */
+export async function nextWorkflowFileName(workspace: string, base: string): Promise<string> {
+  const safe = base.replace(/[^A-Za-z0-9_-]/g, '-').replace(/^-+|-+$/g, '') || 'workflow'
+  const existing = await existingWorkflowBases(workspace)
+  if (!existing.has(safe)) return safe
+  let n = 2
+  while (existing.has(`${safe}-${n}`)) n += 1
+  return `${safe}-${n}`
+}
+
 /** Save a workflow instance into the project directory (atomic write). */
 export async function saveWorkflow(
   workspace: string,
   fileName: string,
   yamlText: string,
+  options: { unique?: boolean } = {},
 ): Promise<string> {
   const dir = projectWorkflowsDir(workspace)
   await mkdir(dir, { recursive: true })
-  const safeName = fileName.endsWith('.yaml') ? fileName : `${fileName}.yaml`
-  if (!/^[A-Za-z0-9_-]+\.yaml$/.test(safeName)) {
-    throw new Error(`workflow 文件名非法：${safeName}（只允许字母、数字、下划线、连字符）`)
+  const base = fileName.endsWith('.yaml') ? fileName.slice(0, -'.yaml'.length) : fileName
+  if (!/^[A-Za-z0-9_-]+$/.test(base)) {
+    throw new Error(`workflow 文件名非法：${base}（只允许字母、数字、下划线、连字符）`)
   }
+  const resolvedBase = options.unique ? await nextWorkflowFileName(workspace, base) : base
+  const safeName = `${resolvedBase}.yaml`
   const file = join(dir, safeName)
   await writeFileAtomic(file, yamlText)
   return file

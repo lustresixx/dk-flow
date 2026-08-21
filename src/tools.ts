@@ -256,7 +256,9 @@ export function registerTools(ctx: Context, service: AceHarnessService): void {
             const instantiated = await service.instantiate(templateId, undefined, values, {})
             if (args.save === true) {
               const fileName = (args.file as string | undefined) ?? `${templateId}.yaml`
-              const saved = await service.saveWorkflowConfig(workspace, fileName, instantiated.yamlText)
+              const saved = await service.saveWorkflowConfig(workspace, fileName, instantiated.yamlText, {
+                unique: args.file === undefined,
+              })
               return {
                 created: true,
                 saved,

@@ -153,11 +153,11 @@ async function dispatch(ctx: Context, service: AceHarnessService, invocation: Co
           service.listWorkflows(workspace),
           service.listRuns(workspace),
         ])
-        const lines = ['内置模板：', ...templates.map((t) => `  · ${t.id}@${t.version} — ${t.manifest.metadata.name}`)]
+        const lines = ['内置模板：', ...templates.map((t, index) => `  ${index + 1}. ${t.id}@${t.version} — ${t.manifest.metadata.name}`)]
         lines.push('', 'Workflow 实例：')
         if (workflows.length === 0) lines.push('  （无，可通过 /workflow create 从模板创建）')
-        for (const workflow of workflows) {
-          lines.push(`  · ${workflow.fileName} — ${workflow.summary.name}（${workflow.summary.stateCount} 状态 / ${workflow.summary.stepCount} 步，${workflow.source}）`)
+        for (const [index, workflow] of workflows.entries()) {
+          lines.push(`  ${index + 1}. ${workflow.fileName} — ${workflow.summary.name}（${workflow.summary.stateCount} 状态 / ${workflow.summary.stepCount} 步，${workflow.source}）`)
         }
         lines.push('', '运行记录：')
         if (runs.length === 0) lines.push('  （无）')
@@ -250,7 +250,9 @@ async function dispatch(ctx: Context, service: AceHarnessService, invocation: Co
             : ''
         if (flags.has('save')) {
           const fileName = lastFlag(flags, 'file') ?? `${templateId}.yaml`
-          const saved = await service.saveWorkflowConfig(workspace, fileName, instantiated.yamlText)
+          const saved = await service.saveWorkflowConfig(workspace, fileName, instantiated.yamlText, {
+            unique: !flags.has('file'),
+          })
           return ok(`已从模板「${templateId}」创建工作流并保存到 ${saved}${pendingNote}\n\n${instantiated.yamlText}`)
         }
         return ok(`已从模板「${templateId}」创建工作流（未保存，可用 --save 落盘到工作区 .dsh/workflows）${pendingNote}\n\n${instantiated.yamlText}`)

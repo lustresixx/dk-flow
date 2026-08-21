@@ -26,6 +26,16 @@ type Tab = 'templates' | 'workflows' | 'runs'
 const STATE_ROUTE = route('state')
 const LOGO = '/plugins/dsh-ace-harness/assets/ace-logo.png'
 
+/** Resolve a non-colliding workflow base name: `base` → `base-2` → `base-3`… */
+function nextFileName(existingBases: readonly string[], base: string): string {
+  const safe = base.replace(/[^A-Za-z0-9_-]/g, '-').replace(/^-+|-+$/g, '') || 'workflow'
+  const existing = new Set(existingBases)
+  if (!existing.has(safe)) return safe
+  let n = 2
+  while (existing.has(`${safe}-${n}`)) n += 1
+  return `${safe}-${n}`
+}
+
 /** One archived run row from the SQLite history route. */
 interface ArchivedRunRow {
   runId: string
@@ -128,8 +138,14 @@ export function Workbench(props: WorkbenchProps): JSX.Element {
     [],
   )
 
+  /** Existing instance base names (no extension), for collision-free naming. */
+  const workflowNames = useMemo(
+    () => (state?.workspaces ?? []).flatMap((workspace) => workspace.workflows.map((entry) => entry.fileName)),
+    [state],
+  )
+
   const instantiateForEdit = useCallback(
-    async (templateId: string, instanceValues: Record<string, string>, workspacePath: string, fileName: string): Promise<void> => {
+    async (templateId: string, instanceValues: Record<string, string>, workspacePath: string): Promise<void> => {
       try {
         // Empty fields are deferred to run time; only bind what was filled.
         const values = Object.fromEntries(
@@ -144,12 +160,13 @@ export function Workbench(props: WorkbenchProps): JSX.Element {
           setNotice(`实例化失败：${await response.text()}`)
           return
         }
+        const fileName = `${nextFileName(workflowNames, templateId)}.yaml`
         setEditor({ yaml: await response.text(), workspacePath, fileName })
       } catch (err) {
         setNotice(`实例化失败：${(err as Error).message}`)
       }
     },
-    [],
+    [workflowNames],
   )
 
   /** Create-from-blank entry: a minimal one-state workflow in the editor. */
@@ -162,10 +179,10 @@ export function Workbench(props: WorkbenchProps): JSX.Element {
       setEditor({
         yaml: blankWorkflowYaml('未命名工作流'),
         workspacePath,
-        fileName: `workflow-${Date.now()}.yaml`,
+        fileName: `${nextFileName(workflowNames, 'workflow')}.yaml`,
       })
     },
-    [],
+    [workflowNames],
   )
 
   /** SQLite archive toggle + archived run drill-down. */
@@ -272,14 +289,14 @@ export function Workbench(props: WorkbenchProps): JSX.Element {
         <div className={styles.body}>
           <aside className={styles.sidebar}>
             {tab === 'templates' ? (
-              state?.templates.map((item) => (
+              state?.templates.map((item, index) => (
                 <button
                   key={`${item.id}@${item.version}`}
                   type="button"
                   className={template?.id === item.id ? styles.itemActive : styles.item}
                   onClick={() => { setTemplate(item) }}
                 >
-                  <span className={styles.itemName}>{item.name}</span>
+                  <span className={styles.itemName}><span className={styles.itemIndex}>{index + 1}</span>{item.name}</span>
                   <span className={styles.itemMeta}>{item.stateCount} 状态 · {item.agents.length} Agent</span>
                 </button>
               ))
@@ -292,14 +309,14 @@ export function Workbench(props: WorkbenchProps): JSX.Element {
                 >
                   ＋ 新建空白工作流
                 </button>
-                {workflows.map((item) => (
+                {workflows.map((item, index) => (
                   <button
                     key={`${item.workspacePath}/${item.entry.fileName}`}
                     type="button"
                     className={workflow?.entry.fileName === item.entry.fileName ? styles.itemActive : styles.item}
                     onClick={() => { setWorkflow(item) }}
                   >
-                    <span className={styles.itemName}>{item.entry.name}</span>
+                    <span className={styles.itemName}><span className={styles.itemIndex}>{index + 1}</span>{item.entry.name}</span>
                     <span className={styles.itemMeta}>{item.entry.fileName} · {item.entry.stateCount} 状态</span>
                   </button>
                 ))}
@@ -386,7 +403,7 @@ function TemplateDetail(props: {
   template: StateTemplateDto
   workspacePath: string
   submit: (text: string) => Promise<void>
-  instantiateForEdit: (templateId: string, values: Record<string, string>, workspacePath: string, fileName: string) => void
+  instantiateForEdit: (templateId: string, values: Record<string, string>, workspacePath: string) => void
 }): JSX.Element {
   const { template } = props
   // Run-time parameter form for 直接运行 only; creation stays parameter-free.
@@ -449,7 +466,7 @@ function TemplateDetail(props: {
           type="button"
           className={styles.secondary}
           onClick={() => {
-            props.instantiateForEdit(template.id, {}, props.workspacePath, `${template.id}.yaml`)
+            props.instantiateForEdit(template.id, {}, props.workspacePath)
           }}
         >
           创建并编排

@@ -506,12 +506,17 @@ export default class AceHarnessService extends Service {
   }
 
   /** Save a workflow instance into the workspace project directory. */
-  async saveWorkflowConfig(workspace: string, fileName: string, yamlText: string): Promise<string> {
+  async saveWorkflowConfig(
+    workspace: string,
+    fileName: string,
+    yamlText: string,
+    options: { unique?: boolean } = {},
+  ): Promise<string> {
     const validated = await this.validateWorkflowYaml(yamlText)
     if (validated.errors.length > 0) {
       throw new Error(`workflow 引用校验失败: ${validated.errors.join('; ')}`)
     }
-    return saveWorkflow(workspace, fileName, yamlText)
+    return saveWorkflow(workspace, fileName, yamlText, options)
   }
 
   /** Delete a workspace workflow instance. */

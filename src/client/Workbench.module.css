@@ -226,6 +226,20 @@
   font-weight: 600;
 }
 
+.itemIndex {
+  display: inline-block;
+  min-width: 20px;
+  margin-right: 6px;
+  padding: 0 5px;
+  border-radius: 6px;
+  background: rgba(127, 140, 248, 0.16);
+  color: #8a96e8;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+  vertical-align: 1px;
+}
+
 .itemMeta {
   font-size: 12px;
   color: #9a9ab0;
