@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeStaleRun } from '../src/store/run-store.js'
+import { normalizeRunStatus, normalizeStaleRun, STALE_RUN_MS } from '../src/store/run-store.js'
 import type { RunState } from '../src/engine/types.js'
 
 const base: RunState = {
@@ -50,5 +50,44 @@ describe('normalizeStaleRun', () => {
   it('treats unparseable timestamps as fresh (never falsely crashes)', () => {
     const broken = { ...base, updatedAt: 'not-a-date' }
     expect(normalizeStaleRun(broken, NOW).status).toBe('running')
+  })
+})
+
+describe('normalizeRunStatus (P1-2 shared single stale rule)', () => {
+  // The SQL stats feed and the JSON file scan both derive status from this
+  // ONE function (P1-2). Pin the rule's own boundaries so the two feeds
+  // cannot re-split over an off-by-one or a terminal-status edge.
+  const stale = new Date(NOW - STALE_RUN_MS - 1).toISOString()
+  const exactBoundary = new Date(NOW - STALE_RUN_MS).toISOString()
+  const fresh = new Date(NOW - STALE_RUN_MS + 1).toISOString()
+
+  it('crashes a non-terminal status past the staleness bound', () => {
+    expect(normalizeRunStatus('running', stale, NOW)).toBe('crashed')
+  })
+
+  it('keeps a non-terminal status AT the exact boundary (strict >)', () => {
+    // STALE_RUN_MS exactly: `now - updated > STALE_RUN_MS` is false, so the
+    // run is NOT stale. An off-by-one (>=) here would crash a run that is
+    // exactly on the boundary in both feeds.
+    expect(normalizeRunStatus('running', exactBoundary, NOW)).toBe('running')
+  })
+
+  it('keeps a fresh non-terminal status', () => {
+    expect(normalizeRunStatus('running', fresh, NOW)).toBe('running')
+  })
+
+  it('never ages terminal statuses, however old', () => {
+    for (const status of ['completed', 'failed', 'stopped', 'crashed']) {
+      expect(normalizeRunStatus(status, stale, NOW)).toBe(status)
+    }
+  })
+
+  it('treats unparseable updatedAt as fresh in the shared rule too', () => {
+    expect(normalizeRunStatus('running', 'not-a-date', NOW)).toBe('running')
+  })
+
+  it('applies the stale rule to any non-terminal status (waiting-human included)', () => {
+    expect(normalizeRunStatus('waiting-human', stale, NOW)).toBe('crashed')
+    expect(normalizeRunStatus('waiting-human', fresh, NOW)).toBe('waiting-human')
   })
 })

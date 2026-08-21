@@ -255,6 +255,9 @@ describe('startRun / resumeRun startup-window settlement (P1-1)', () => {
     /** Persistent audit-destination failure: EVERY write throws, including
      * the settle's `end` row — the exact worst case of the P1-1 repro. */
     failAllAudits?: boolean
+    /** ensureSandboxDir throws synchronously (startRun window, before the
+     * stream is opened) — a distinct P1-1 failure point from audit writes. */
+    failEnsureSandboxDir?: boolean
   }): LifecycleHarness {
     const registry = new RunRegistry()
     const emitted: Array<{ runId: string; status: string }> = []
@@ -306,7 +309,9 @@ describe('startRun / resumeRun startup-window settlement (P1-1)', () => {
       workspaceOf: () => workspace,
       resolveWorkflowConfig: async () => ({ config: workflowConfig, file: 'demo.yaml' }),
       makeExecutor: () => stubExecutor,
-      ensureSandboxDir: () => {},
+      ensureSandboxDir: () => {
+        if (options.failEnsureSandboxDir) throw new Error('sandbox boom')
+      },
     }
     return { lifecycle: new RunLifecycle(deps), registry, emitted }
   }
@@ -389,5 +394,46 @@ describe('startRun / resumeRun startup-window settlement (P1-1)', () => {
     expect(registry.isActive(runId)).toBe(false)
     const audit = await readAudit(runId)
     expect(audit).toMatchObject({ event: 'end', status: 'failed', error: 'audit boom: resume' })
+  })
+
+  it('settles a startRun whose ensureSandboxDir throws before the stream opens (P1-1)', async () => {
+    // A distinct P1-1 window failure point from the audit write: the sandbox
+    // setup throws synchronously BEFORE the live stream is opened. The settle
+    // must still write the end row, tolerate the missing stream entry, and
+    // release the slot.
+    const harness = makeLifecycleHarness({ failStartAudit: false, failResumeAudit: false, failEnsureSandboxDir: true })
+    const { lifecycle, registry, emitted } = harness
+    await expect(lifecycle.startRun(startArgs())).rejects.toThrow('sandbox boom')
+    const firstEmitted = emitted[0]
+    expect(firstEmitted).toBeTruthy()
+    const runId = firstEmitted!.runId
+    expect(emitted).toEqual([{ runId, status: 'failed' }])
+    // Stream never opened — settleStream on a missing entry is a no-op, and
+    // the run must not be left active.
+    expect(registry.streams.has(runId)).toBe(false)
+    expect(registry.isActive(runId)).toBe(false)
+    expect(registry.counts().activeRuns).toBe(0)
+    const audit = await readAudit(runId)
+    expect(audit).toMatchObject({ event: 'end', status: 'failed', error: 'sandbox boom' })
+  })
+
+  it('settles a job-mode start whose detach fails on a missing jobs registry (P1-1)', async () => {
+    // `detachAsJob` throws inside the same register→hand-off window when the
+    // profile has no jobs service; the failure must not leak the slot or
+    // leave the stream stuck in `preparing`.
+    const harness = makeLifecycleHarness({ failStartAudit: false, failResumeAudit: false })
+    const { lifecycle, registry, emitted } = harness
+    await expect(
+      lifecycle.startRun({ ...startArgs(), mode: 'job' as const }),
+    ).rejects.toThrow('当前 profile 未挂载 jobs 服务')
+    const firstEmitted = emitted[0]
+    expect(firstEmitted).toBeTruthy()
+    const runId = firstEmitted!.runId
+    expect(emitted).toEqual([{ runId, status: 'failed' }])
+    expect(registry.streams.get(runId)?.status).toBe('failed')
+    expect(registry.isActive(runId)).toBe(false)
+    expect(registry.counts().activeRuns).toBe(0)
+    const audit = await readAudit(runId)
+    expect(audit).toMatchObject({ event: 'end', status: 'failed', error: '当前 profile 未挂载 jobs 服务，无法以后台 job 方式运行' })
   })
 })
