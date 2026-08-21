@@ -12,6 +12,7 @@
 - **状态机工作流**：状态串行/并行执行步骤，`success / pass / conditional_pass / fail` 四类裁决驱动流转（`pass≡success`，`conditional_pass` 默认回退自转移、模板可显式前向），熔断保护（最大转移数 / 最大自转移数）
 - **四类节点**：AI 步骤（专属角色子代理 + 工具过滤）、快速 LLM（单轮直调，无子代理开销）、脚本（JS 沙箱 / Python 子进程，严格输入输出契约）、子工作流（嵌套 + 深度上限）
 - **对抗式多 Agent**：13 个内置角色（defender / attacker / judge / supervisor），红蓝评审、七角色接力评审、带人工审批门的架构重构评审等 8 个内置模板
+- **Skill 调用**：角色（`AgentDefinition.skills`）或步骤（`WorkflowStep.skills`）可声明要加载的 skill；经 `ACE_TOOL_MAP` 映射到面向模型的 `skill` 工具，子代理按提示词逐一加载并遵循（已声明但不可用的 skill 静默跳过）
 - **平台级运行治理**：断点恢复、崩溃自愈、**孤儿运行认领**（属主会话死亡后可由任意活动会话续跑并改绑）、人工审批门、风险自适应 supervisor、自动重试（指数退避）、步骤级超时、后台 job、停止即停、并发上限
 - **三大入口**：全屏工作台（React Flow 可视化编辑器 + 运行时拓扑图 + 流式侧边栏）、`/workflow` 斜杠命令族、模型工具（`workflow_list` / `run_workflow` / `workflow_manage`）
 - **单节点独立验证**：`/workflow test <工作流> <状态> <步骤>` 或编辑器里每个步骤的「▶ 验证」按钮——只跑一个节点看产出与 verdict，不跑整个工作流；编辑器侧栏提供 **mock 输入框**（JSON → 脚本 `context.inputs` / `context.requirements`）
@@ -114,7 +115,7 @@ workflow:
 
 | 类型 | 说明 |
 |---|---|
-| `agent` | 选择内置角色启动 DSH 子代理；judge 结构化输出 verdict；按角色过滤工具 |
+| `agent` | 选择内置角色启动 DSH 子代理；judge 结构化输出 verdict；按角色过滤工具；`skills` 声明可加载的 skill（经 `ACE_TOOL_MAP` → `skill` 工具） |
 | `llm` | 一次直接的单轮模型调用（不启动子代理、无工具），适合快速判断/分类/摘要；`agent` 可选（复用角色设定），`model` 可选 |
 | `script` | 内联 JS（node:vm 沙箱、`"use strict"`、冻结只读 `context`）或 `scriptFile` 引用文件（`.js/.mjs/.cjs` 进沙箱，`.py` 用 Python 子进程）。必须返回 `{ output: "...", success: true/false }`（或 `{ error }`），可选 `data`（JSON ≤64KB）传给下游；违反契约直接判 fail |
 | `subworkflow` | 引用另一工作流（文件名/模板 id），独立 runId，结果映射回 verdict |
