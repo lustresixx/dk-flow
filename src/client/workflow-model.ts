@@ -110,6 +110,7 @@ export function configToGraph(config: WorkflowConfig): { nodes: StateNode[]; edg
         id: `e-${state.name}-${transition.to}-${edges.length}`,
         source: state.name,
         target: transition.to,
+        type: state.name === transition.to ? 'selfLoop' : undefined,
         label: transition.label ?? (verdict === '' ? '' : verdictMeta(verdict).label),
         ...edgePresentation(verdict),
         data: { transition },

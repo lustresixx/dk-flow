@@ -23,6 +23,7 @@ import {
   type NodeProps,
 } from '@xyflow/react'
 import type { StreamSnapshotDto } from './types.ts'
+import { SelfLoopEdge } from './SelfLoopEdge.tsx'
 import { ACTIVE_STATUSES, foldVerdict, route, STATUS_TEXT, STEP_TYPE_TEXT } from './run-meta.ts'
 import styles from './LiveRunPanel.module.css'
 import '@xyflow/react/dist/style.css'
@@ -70,6 +71,7 @@ function LiveStateNode(props: NodeProps<Node<LiveNodeData>>): JSX.Element {
 }
 
 const nodeTypes = { liveState: LiveStateNode }
+const edgeTypes = { selfLoop: SelfLoopEdge }
 
 export interface LiveRunPanelProps {
   /** Interesting run discovered by the launcher, or null when idle. */
@@ -177,6 +179,7 @@ export function LiveRunPanel(props: LiveRunPanelProps): JSX.Element | null {
         id: `e-${transition.from}-${transition.to}-${index}`,
         source: transition.from,
         target: transition.to,
+        type: transition.from === transition.to ? 'selfLoop' : undefined,
         label: transition.label ?? transition.verdict ?? '',
         markerEnd: {
           type: MarkerType.ArrowClosed,
@@ -253,7 +256,7 @@ export function LiveRunPanel(props: LiveRunPanelProps): JSX.Element | null {
               </div>
             </div>
             <div className={styles.diagram}>
-              <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} fitView nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} zoomOnScroll panOnDrag minZoom={0.4} maxZoom={2.5}>
+              <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} fitView nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} zoomOnScroll panOnDrag minZoom={0.4} maxZoom={2.5}>
                 <Background variant={BackgroundVariant.Dots} gap={18} size={1.2} color="var(--dsw-alias-line-strong)" />
                 <Controls showInteractive={false} />
               </ReactFlow>

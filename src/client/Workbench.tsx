@@ -17,6 +17,7 @@ import {
   type NodeProps,
 } from '@xyflow/react'
 import { EditorPane } from './WorkflowEditor.tsx'
+import { SelfLoopEdge } from './SelfLoopEdge.tsx'
 import { blankWorkflowYaml } from './workflow-model.ts'
 import { ACTIVE_STATUSES, route, STATUS_TEXT, STEP_TYPE_TEXT, VERDICT_TEXT } from './run-meta.ts'
 import type { AceStateDto, StateRunDto, StateTemplateDto, StateWorkflowDto, WorkspaceStatsDto } from './types.ts'
@@ -656,6 +657,7 @@ function TopologyNode(props: NodeProps<Node<TopologyNodeData>>): JSX.Element {
 }
 
 const topologyNodeTypes = { topologyState: TopologyNode }
+const topologyEdgeTypes = { selfLoop: SelfLoopEdge }
 
 /** Static state diagram of one run: outcomes color the nodes, the executed path highlights the edges. */
 function RunTopology(props: { run: StateRunDto }): JSX.Element | null {
@@ -692,6 +694,7 @@ function RunTopology(props: { run: StateRunDto }): JSX.Element | null {
         id: `t-${transition.from}-${transition.to}-${index}`,
         source: transition.from,
         target: transition.to,
+        type: transition.from === transition.to ? 'selfLoop' : undefined,
         label: transition.label ?? transition.verdict ?? '',
         style: { stroke: base, strokeWidth: isTaken ? 3 : 1.5, opacity: isTaken ? 1 : 0.4 },
         markerEnd: { type: MarkerType.ArrowClosed, color: base, width: 16, height: 16 },
@@ -711,6 +714,7 @@ function RunTopology(props: { run: StateRunDto }): JSX.Element | null {
           nodes={nodes}
           edges={edges}
           nodeTypes={topologyNodeTypes}
+          edgeTypes={topologyEdgeTypes}
           fitView
           nodesDraggable={false}
           nodesConnectable={false}

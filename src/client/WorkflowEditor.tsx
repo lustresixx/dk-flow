@@ -26,6 +26,7 @@ import {
   type OnReconnect,
 } from '@xyflow/react'
 import { useCallback, useMemo, useState } from 'react'
+import { SelfLoopEdge } from './SelfLoopEdge.tsx'
 import {
   configToGraph,
   configToYaml,
@@ -84,6 +85,7 @@ function AceStateNode(props: NodeProps<StateNode>): JSX.Element {
 }
 
 const nodeTypes = { aceState: AceStateNode }
+const edgeTypes = { selfLoop: SelfLoopEdge }
 
 export interface EditorPaneProps {
   initialYaml: string
@@ -257,6 +259,7 @@ export function EditorPane(props: EditorPaneProps): JSX.Element {
         id: `e-${connection.source}-${connection.target}-${Date.now()}`,
         source: connection.source,
         target: connection.target,
+        type: connection.source === connection.target ? 'selfLoop' : undefined,
         label: '成功',
         ...edgePresentation('success'),
         data: { transition },
@@ -284,6 +287,7 @@ export function EditorPane(props: EditorPaneProps): JSX.Element {
             id: nextId,
             source: connection.source,
             target: connection.target,
+            type: connection.source === connection.target ? 'selfLoop' : undefined,
             data: transition ? { transition: { ...transition, to: connection.target } } : edge.data,
           }
         }),
@@ -308,6 +312,7 @@ export function EditorPane(props: EditorPaneProps): JSX.Element {
         id: `e-${source}-${target}-${Date.now()}`,
         source,
         target,
+        type: source === target ? 'selfLoop' : undefined,
         label: verdict === '' ? '' : meta.label,
         ...edgePresentation(verdict),
         data: { transition },
@@ -449,6 +454,7 @@ export function EditorPane(props: EditorPaneProps): JSX.Element {
             nodes={nodes}
             edges={edges}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
