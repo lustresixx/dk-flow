@@ -239,6 +239,63 @@
   color: #9a9ab0;
 }
 
+.testInput {
+  border-top: 1px dashed var(--dsw-border, #3c3f4a);
+  padding: 10px 14px;
+  background: rgba(0, 0, 0, 0.14);
+}
+
+.testInputHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #b8b8cf;
+}
+
+.testInputReset {
+  border: 1px solid var(--dsw-border, #3c3f4a);
+  background: transparent;
+  color: var(--dsw-text-muted, #9a9ab0);
+  border-radius: 6px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.testInputArea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--dsw-border, #3c3f4a);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #d7d7ea;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 8px;
+  resize: vertical;
+}
+
+.testInputArea:focus {
+  outline: none;
+  border-color: var(--dsw-accent, #4f5bd5);
+}
+
+.testInputHint {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #8a8aa3;
+}
+
+.testInputHint code {
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  color: #a9a9c4;
+}
+
 .addStep {
   border: 1px dashed var(--dsw-border, #3c3f4a);
   background: transparent;

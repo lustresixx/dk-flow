@@ -106,6 +106,20 @@ export function EditorPane(props: EditorPaneProps): JSX.Element {
   const [saving, setSaving] = useState(false)
   const [nameError, setNameError] = useState<string | null>(null)
   const [testResult, setTestResult] = useState<{ loading: boolean; text: string } | null>(null)
+  const [mockValues, setMockValues] = useState('{}')
+
+  /** Parse the mock-values textarea; null means invalid JSON. */
+  const parseMockValues = useCallback((): Record<string, string> | null => {
+    const trimmed = mockValues.trim()
+    if (trimmed === '') return {}
+    try {
+      const parsed: unknown = JSON.parse(trimmed)
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+      return parsed as Record<string, string>
+    } catch {
+      return null
+    }
+  }, [mockValues])
 
   const config = useMemo(() => baseConfig, [baseConfig])
 
@@ -114,6 +128,11 @@ export function EditorPane(props: EditorPaneProps): JSX.Element {
     async (draft: StepDraft): Promise<void> => {
       const stateName = selectedNode
       if (!stateName) return
+      const values = parseMockValues()
+      if (values === null) {
+        setTestResult({ loading: false, text: '验证输入不是合法的 JSON 对象（例如 {"requirements":"…"}）' })
+        return
+      }
       setTestResult({ loading: true, text: '验证中…' })
       try {
         const next = graphToConfig(nodes, edges, config)
@@ -121,7 +140,7 @@ export function EditorPane(props: EditorPaneProps): JSX.Element {
         const response = await fetch('/plugins/dsh-ace-harness/test-step', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ yaml, state: stateName, step: draft.name, values: {} }),
+          body: JSON.stringify({ yaml, state: stateName, step: draft.name, values }),
         })
         const body = (await response.json()) as {
           error?: string
@@ -145,12 +164,17 @@ export function EditorPane(props: EditorPaneProps): JSX.Element {
         setTestResult({ loading: false, text: `验证失败：${(error as Error).message}` })
       }
     },
-    [nodes, edges, config, selectedNode],
+    [nodes, edges, config, selectedNode, parseMockValues],
   )
 
   /** Verify the whole selected state: all steps in order + predicted edge. */
   const runStateTest = useCallback(
     async (stateName: string): Promise<void> => {
+      const values = parseMockValues()
+      if (values === null) {
+        setTestResult({ loading: false, text: '验证输入不是合法的 JSON 对象（例如 {"requirements":"…"}）' })
+        return
+      }
       setTestResult({ loading: true, text: '验证状态中…（依次运行全部步骤，可能耗时较长）' })
       try {
         const next = graphToConfig(nodes, edges, config)
@@ -158,7 +182,7 @@ export function EditorPane(props: EditorPaneProps): JSX.Element {
         const response = await fetch('/plugins/dsh-ace-harness/test-state', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ yaml, state: stateName, values: {} }),
+          body: JSON.stringify({ yaml, state: stateName, values }),
         })
         const body = (await response.json()) as {
           error?: string | null
@@ -193,7 +217,7 @@ export function EditorPane(props: EditorPaneProps): JSX.Element {
         setTestResult({ loading: false, text: `验证失败：${(error as Error).message}` })
       }
     },
-    [nodes, edges, config],
+    [nodes, edges, config, parseMockValues],
   )
 
   const onNodesChange: OnNodesChange<StateNode> = useCallback(
@@ -483,6 +507,30 @@ export function EditorPane(props: EditorPaneProps): JSX.Element {
               选择状态编辑步骤与转移；从节点右侧圆点拖线到另一节点、或在状态「转移」区直接添加，即可指定成功/失败/条件通过分别流向哪个状态。
             </div>
           )}
+          <div className={styles.testInput}>
+            <div className={styles.testInputHeader}>
+              <span>验证输入（mock 数据）</span>
+              <button
+                type="button"
+                className={styles.testInputReset}
+                title="清空为默认空输入"
+                onClick={() => { setMockValues('{}') }}
+              >
+                重置
+              </button>
+            </div>
+            <textarea
+              className={styles.testInputArea}
+              rows={4}
+              spellCheck={false}
+              placeholder={'{"requirements":"测试需求", "任意键":"脚本里用 context.inputs 读取"}'}
+              value={mockValues}
+              onChange={(event) => { setMockValues(event.target.value) }}
+            />
+            <p className={styles.testInputHint}>
+              JSON 对象：脚本步骤用 <code>context.inputs</code> 读取各键，<code>requirements</code> 键会成为 <code>context.requirements</code>（agent/llm 步骤的需求上下文）。
+            </p>
+          </div>
           {testResult ? (
             <div className={styles.testResult} data-loading={testResult.loading ? 'true' : 'false'}>
               <pre>{testResult.text}</pre>
