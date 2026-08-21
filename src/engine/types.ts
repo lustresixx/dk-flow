@@ -28,6 +28,13 @@ export interface StepOutcome {
   attempts?: number
   startedAt: string
   finishedAt: string
+  /**
+   * Step duration measured with a monotonic clock at the execution site
+   * (P1-E), in ms. Preferred over `finishedAt − startedAt` (wall clock) for
+   * duration statistics because the monotonic clock is immune to NTP jumps.
+   * Absent on runs persisted before the instrumentation landed.
+   */
+  durationMs?: number
 }
 
 /** Verdict of a completed state, derived from its last segment. */

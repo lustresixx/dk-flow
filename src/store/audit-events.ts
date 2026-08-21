@@ -7,7 +7,7 @@
  * @module dsh-ace-harness/store
  */
 import { createHash } from 'node:crypto'
-import type { RunState, StateOutcome } from '../engine/types.js'
+import type { RunState, StateOutcome, StepOutcome } from '../engine/types.js'
 
 /** Per-run progress cursor carried between persist snapshots. */
 export interface RunProgressTrack {
@@ -60,6 +60,21 @@ export function runDurationMs(outcomes: StateOutcome[]): number | null {
   const ends = outcomes.flatMap((outcome) => outcome.steps.map((step) => Date.parse(step.finishedAt))).filter(Number.isFinite)
   if (starts.length === 0 || ends.length === 0) return null
   return Math.max(0, Math.max(...ends) - Math.min(...starts))
+}
+
+/**
+ * One step's duration, preferring the monotonic-clock measurement recorded at
+ * the execution site (P1-E) and falling back to the wall-clock timestamp span
+ * for runs persisted before the instrumentation landed (G7: old data has no
+ * monotonic value — handled as missing). Shared by the stats kernel so both
+ * feed paths use the same duration definition.
+ */
+export function stepDurationMs(step: StepOutcome): number | null {
+  if (typeof step.durationMs === 'number' && Number.isFinite(step.durationMs) && step.durationMs >= 0) {
+    return step.durationMs
+  }
+  const span = Date.parse(step.finishedAt) - Date.parse(step.startedAt)
+  return Number.isFinite(span) && span >= 0 ? span : null
 }
 
 /**

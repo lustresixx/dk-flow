@@ -18,6 +18,23 @@ const now = (): string => new Date().toISOString()
 /** Fallback verdict when a step or state produced none. */
 export const PASS_VERDICT: StepVerdict = { verdict: 'pass', issues: [], rationale: '' }
 
+/**
+ * One execution-site measurement (P1-E): wall-clock ISO stamps bracket the
+ * execution for the human-readable timeline, while the duration comes from
+ * the monotonic clock (`performance.now`), which NTP adjustments cannot skew.
+ * The duration includes retries when the execution carries a retry policy.
+ * A thrown error propagates without a measurement — failed steps carry no
+ * outcome and are recorded separately (failedSteps, batch 4).
+ */
+async function measureExecution<T>(
+  run: () => Promise<T>,
+): Promise<{ value: T; startedAt: string; finishedAt: string; durationMs: number }> {
+  const monoStart = performance.now()
+  const startedAt = now()
+  const value = await run()
+  return { value, startedAt, finishedAt: now(), durationMs: performance.now() - monoStart }
+}
+
 /** The engine slice one step execution reads (`EngineRunOptions` satisfies it). */
 export type StateStepOptions = Pick<
   EngineRunOptions,
@@ -165,7 +182,7 @@ export async function executeStateStep(input: {
       stepData: buildStepData(run.stateOutcomes, completedSteps),
     }
     const timeoutMs = stepTimeoutMs(step)
-    const scriptResult =
+    const { value: scriptResult, startedAt, finishedAt, durationMs } = await measureExecution(async () =>
       step.scriptFile?.trim() !== undefined && step.scriptFile.trim() !== ''
         ? await runScriptFile(step.scriptFile.trim(), scriptInput, {
             projectRoot: run.context.projectRoot,
@@ -175,7 +192,8 @@ export async function executeStateStep(input: {
             sandboxDir: options.sandboxDir,
             signal: options.signal,
           })
-        : await runScriptNode(step.script ?? '', scriptInput, { timeoutMs, signal: options.signal })
+        : await runScriptNode(step.script ?? '', scriptInput, { timeoutMs, signal: options.signal }),
+    )
     return {
       key,
       state: machineState.name,
@@ -191,8 +209,9 @@ export async function executeStateStep(input: {
         rationale: scriptResult.error ?? truncate(scriptResult.output, CONCLUSION_BUDGET),
       },
       ...(scriptResult.data !== undefined ? { data: scriptResult.data } : {}),
-      startedAt: now(),
-      finishedAt: now(),
+      startedAt,
+      finishedAt,
+      durationMs,
     }
   }
   const context = {
@@ -205,22 +224,24 @@ export async function executeStateStep(input: {
     stepData: buildStepData(run.stateOutcomes, completedSteps),
   }
   if (step.type === 'llm') {
-    const { value: result, attempts } = await retryOnError(
-      () =>
-        options.executor.runLlmStep({
-          stepName: step.name,
-          role,
-          task: step.task ?? '',
-          agentName: step.agent,
-          constraints: step.constraints ?? [],
-          model: step.model,
-          ctx: context,
-          parent: options.parent,
-          signal: options.signal,
-          timeoutMs: stepTimeoutMs(step),
-        }),
-      resolveStepRetry(step, options.config.workflow),
-      options.signal,
+    const { value: { value: result, attempts }, startedAt, finishedAt, durationMs } = await measureExecution(async () =>
+      retryOnError(
+        () =>
+          options.executor.runLlmStep({
+            stepName: step.name,
+            role,
+            task: step.task ?? '',
+            agentName: step.agent,
+            constraints: step.constraints ?? [],
+            model: step.model,
+            ctx: context,
+            parent: options.parent,
+            signal: options.signal,
+            timeoutMs: stepTimeoutMs(step),
+          }),
+        resolveStepRetry(step, options.config.workflow),
+        options.signal,
+      ),
     )
     return {
       key,
@@ -232,24 +253,27 @@ export async function executeStateStep(input: {
       outputSummary: result.outputSummary,
       verdict: result.verdict,
       attempts,
-      startedAt: now(),
-      finishedAt: now(),
+      startedAt,
+      finishedAt,
+      durationMs,
     }
   }
   if (step.type === 'subworkflow') {
     const configFile = step.workflow?.trim() || step.subworkflow?.configFile?.trim()
     if (!configFile) throw new EngineError(`子工作流步骤「${step.name}」缺少配置`, 'NO_MATCH')
-    const { value: child, attempts } = await retryOnError(
-      () =>
-        options.executor.runSubworkflowStep({
-          stepName: step.name,
-          configFile,
-          parent: options.parent,
-          signal: options.signal,
-          inheritedRequirements: run.context.requirements ?? '',
-        }),
-      resolveStepRetry(step, options.config.workflow),
-      options.signal,
+    const { value: { value: child, attempts }, startedAt, finishedAt, durationMs } = await measureExecution(async () =>
+      retryOnError(
+        () =>
+          options.executor.runSubworkflowStep({
+            stepName: step.name,
+            configFile,
+            parent: options.parent,
+            signal: options.signal,
+            inheritedRequirements: run.context.requirements ?? '',
+          }),
+        resolveStepRetry(step, options.config.workflow),
+        options.signal,
+      ),
     )
     return {
       key,
@@ -262,33 +286,36 @@ export async function executeStateStep(input: {
       verdict: child.verdict,
       subworkflowOutcome: child.outcome,
       attempts,
-      startedAt: now(),
-      finishedAt: now(),
+      startedAt,
+      finishedAt,
+      durationMs,
     }
   }
   const evidence =
     role === 'attacker' || role === 'judge'
       ? evidenceFor(completedSteps, machineState.name)
       : undefined
-  const { value: result, attempts } = await retryOnError(
-    () =>
-      options.executor.runAgentStep({
-        stepName: step.name,
-        agentName: step.agent ?? '',
-        agentSystemPrompt: '',
-        role,
-        task: step.task ?? '',
-        constraints: step.constraints ?? [],
-        preCommands: step.preCommands ?? [],
-        ctx: context,
-        evidence,
-        skills: step.skills ?? [],
-        parent: options.parent,
-        signal: options.signal,
-        timeoutMs: stepTimeoutMs(step),
-      }),
-    resolveStepRetry(step, options.config.workflow),
-    options.signal,
+  const { value: { value: result, attempts }, startedAt, finishedAt, durationMs } = await measureExecution(async () =>
+    retryOnError(
+      () =>
+        options.executor.runAgentStep({
+          stepName: step.name,
+          agentName: step.agent ?? '',
+          agentSystemPrompt: '',
+          role,
+          task: step.task ?? '',
+          constraints: step.constraints ?? [],
+          preCommands: step.preCommands ?? [],
+          ctx: context,
+          evidence,
+          skills: step.skills ?? [],
+          parent: options.parent,
+          signal: options.signal,
+          timeoutMs: stepTimeoutMs(step),
+        }),
+      resolveStepRetry(step, options.config.workflow),
+      options.signal,
+    ),
   )
   return {
     key,
@@ -300,8 +327,9 @@ export async function executeStateStep(input: {
     outputSummary: result.outputSummary,
     verdict: result.verdict,
     attempts,
-    startedAt: now(),
-    finishedAt: now(),
+    startedAt,
+    finishedAt,
+    durationMs,
   }
 }
 

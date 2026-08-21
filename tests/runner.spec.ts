@@ -1045,6 +1045,51 @@ describe('runStateMachine', () => {
     expect(result.status).toBe('stopped')
   })
 
+  it('measures agent steps with wall-clock brackets around the real execution (P1-E)', async () => {
+    const config = singleStepConfig(
+      { name: '慢AI', agent: 'researcher', role: 'defender', task: '慢' },
+    )
+    const executor: StepExecutor = {
+      async runAgentStep() {
+        await new Promise((resolve) => setTimeout(resolve, 15))
+        return { outputSummary: 'done', verdict: V('pass') }
+      },
+      async runLlmStep() {
+        throw new Error('不应调用 LLM 步骤')
+      },
+      async runSubworkflowStep() {
+        throw new Error('不应调用子工作流')
+      },
+    }
+    const result = await runWith(config, executor)
+    const step = result.stateOutcomes[0]!.steps[0]!
+    expect(step.startedAt).not.toBe(step.finishedAt)
+    expect(Date.parse(step.finishedAt)).toBeGreaterThanOrEqual(Date.parse(step.startedAt))
+    // Monotonic duration must cover the actual 15ms execution.
+    expect(step.durationMs).toBeGreaterThanOrEqual(10)
+  })
+
+  it('stamps script steps around their real execution, not after it (F7 pre-defect)', async () => {
+    const config = singleStepConfig(
+      { name: '慢脚本', type: 'script', script: 'const t = Date.now(); while (Date.now() - t < 15) {}; return { output: "slow", success: true }' },
+    )
+    const executor: StepExecutor = {
+      async runAgentStep() {
+        throw new Error('不应调用 Agent 步骤')
+      },
+      async runSubworkflowStep() {
+        throw new Error('不应调用子工作流')
+      },
+    }
+    const result = await runWith(config, executor)
+    const step = result.stateOutcomes[0]!.steps[0]!
+    expect(step.type).toBe('script')
+    // Before the fix both stamps were taken after execution (startedAt ==
+    // finishedAt, duration 恒 0); the brackets must now span the execution.
+    expect(step.startedAt).not.toBe(step.finishedAt)
+    expect(step.durationMs).toBeGreaterThanOrEqual(10)
+  })
+
   it('falls back to run-time inputs when the workflow left requirements empty', async () => {
     const config = singleStepConfig(
       { name: 'AI', agent: 'researcher', role: 'defender', task: '分析' },
