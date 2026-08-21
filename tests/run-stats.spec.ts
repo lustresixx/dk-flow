@@ -205,7 +205,11 @@ describe('combineStatsProjection', () => {
     expect(stats.stateHotspots[0]?.count).toBe(25)
   })
 
-  it('caps step and failed-step hotspots at 10 entries', () => {
+  it('caps step and failed-step hotspots at 10 entries, preserving per-key counts', () => {
+    // Step rows are raw executions: the kernel derives counts per
+    // (state, step[, verdict]) key. 25 distinct keys all tie at count 1, so
+    // the cap keeps any 10 and each carries its own count — unlike the
+    // stateVerdicts feed above, whose rows are pre-counted by the SQL side.
     const steps = Array.from({ length: 25 }, (_, i) => ({
       state: `S${i}`,
       step: 'x',
@@ -217,8 +221,19 @@ describe('combineStatsProjection', () => {
     const stats = combineStatsProjection({ byStatus: [], runs: [], stateVerdicts: [], steps, failedSteps })
     expect(stats.stepHotspots).toHaveLength(10)
     expect(stats.failedStepHotspots).toHaveLength(10)
-    expect(stats.stepHotspots[0]?.count).toBe(25)
-    expect(stats.failedStepHotspots[0]?.count).toBe(25)
+    expect(stats.stepHotspots[0]?.count).toBe(1)
+    expect(stats.failedStepHotspots[0]?.count).toBe(1)
+    // Repeated executions of one key aggregate: the cap never truncates a
+    // hotspot's full count — 25 rows of the same key still report 25.
+    const repeated = combineStatsProjection({
+      byStatus: [],
+      runs: [],
+      stateVerdicts: [],
+      steps: Array.from({ length: 25 }, () => ({ state: 'S0', step: 'x', verdict: 'fail', attempts: 1, durationMs: 100 })),
+      failedSteps: Array.from({ length: 25 }, () => ({ state: 'S0', step: 'x', attempts: 1 })),
+    })
+    expect(repeated.stepHotspots).toEqual([{ state: 'S0', step: 'x', verdict: 'fail', count: 25 }])
+    expect(repeated.failedStepHotspots).toEqual([{ state: 'S0', step: 'x', count: 25 }])
   })
 })
 
