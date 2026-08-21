@@ -27,6 +27,8 @@ export interface AcePanelProps {
   /** Reactive session list: `current` gates which runs may pop the sidebar. */
   sessionsList: ObservableSnapshot<SessionListState>
   send: (text: string) => Promise<boolean>
+  /** Start a run via the REST route (structured values, no flag parsing). */
+  run: (workspace: string, workflow: string, values: Record<string, string>) => Promise<{ ok: boolean; message: string }>
 }
 
 interface RunRow extends SelectableRun {
@@ -114,7 +116,7 @@ export function AcePanel(props: AcePanelProps): JSX.Element {
           (kept mounted so dismiss/collapse memory survives) while open. */}
       <LiveRunPanel runId={selected.runId} suspended={open} />
       {open ? (
-        <Workbench send={props.send} onClose={() => { setOpen(false) }} />
+        <Workbench send={props.send} run={props.run} onClose={() => { setOpen(false) }} />
       ) : (
         <button type="button" className={styles.launcher} onClick={() => { setOpen(true) }}>
           <img src={LOGO} alt="" className={styles.launcherLogo} />

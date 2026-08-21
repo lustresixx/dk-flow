@@ -4,6 +4,7 @@
  * (bundled into the client, so parsing/validation matches the host exactly).
  */
 import type { Edge, Node } from '@xyflow/react'
+import { MarkerType } from '@xyflow/react'
 import { stringify } from 'yaml'
 import { parseWorkflowYaml } from '../dsl/load.js'
 import type { StateMachineState, StateTransition, WorkflowConfig, WorkflowStep } from '../dsl/types.js'
@@ -58,10 +59,11 @@ export function verdictMeta(verdict: string | undefined): { label: string; color
 /** React Flow presentation props for a verdict-colored transition edge. */
 export function edgePresentation(
   verdict: string | undefined,
-): Pick<TransitionEdge, 'style' | 'labelStyle' | 'labelBgStyle' | 'labelBgPadding' | 'labelBgBorderRadius'> {
+): Pick<TransitionEdge, 'style' | 'markerEnd' | 'labelStyle' | 'labelBgStyle' | 'labelBgPadding' | 'labelBgBorderRadius'> {
   const meta = verdictMeta(verdict)
   return {
     style: { stroke: meta.color, strokeWidth: 2 },
+    markerEnd: { type: MarkerType.ArrowClosed, color: meta.color, width: 16, height: 16 },
     labelStyle: { fill: '#ffffff', fontSize: 11, fontWeight: 600 },
     labelBgStyle: { fill: meta.color, fillOpacity: 0.9 },
     labelBgPadding: [6, 3] as [number, number],

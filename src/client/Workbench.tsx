@@ -9,6 +9,7 @@ import {
   BackgroundVariant,
   Controls,
   Handle,
+  MarkerType,
   Position,
   ReactFlow,
   type Edge,
@@ -81,6 +82,8 @@ interface EditorState {
 
 export interface WorkbenchProps {
   send: (text: string) => Promise<boolean>
+  /** Start a run via the REST route (structured values, no flag parsing). */
+  run: (workspace: string, workflow: string, values: Record<string, string>) => Promise<{ ok: boolean; message: string }>
   onClose: () => void
 }
 
@@ -115,6 +118,19 @@ export function Workbench(props: WorkbenchProps): JSX.Element {
     async (text: string): Promise<void> => {
       const ok = await props.send(text)
       setNotice(ok ? `已提交：${text}` : '当前没有可用的会话，无法提交命令')
+    },
+    [props],
+  )
+
+  /** Start a run through the REST route with structured values (no flags). */
+  const runDirect = useCallback(
+    async (workspacePath: string, workflowRef: string, values: Record<string, string>): Promise<void> => {
+      const result = await props.run(workspacePath, workflowRef, values)
+      setNotice(result.ok ? result.message : `运行失败：${result.message}`)
+      if (result.ok) {
+        setTab('runs')
+        void refresh()
+      }
     },
     [props],
   )
@@ -359,6 +375,7 @@ export function Workbench(props: WorkbenchProps): JSX.Element {
                 template={template}
                 workspacePath={workspaces[0]?.path ?? ''}
                 submit={submit}
+                onRun={runDirect}
                 instantiateForEdit={instantiateForEdit}
               />
             ) : tab === 'workflows' && workflow ? (
@@ -366,6 +383,7 @@ export function Workbench(props: WorkbenchProps): JSX.Element {
                 workflow={workflow.entry}
                 workspacePath={workflow.workspacePath}
                 submit={submit}
+                onRun={runDirect}
                 onEdit={(fileName) => { void openEditor(workflow.workspacePath, fileName) }}
               />
             ) : tab === 'runs' && archiveDetail ? (
@@ -403,6 +421,7 @@ function TemplateDetail(props: {
   template: StateTemplateDto
   workspacePath: string
   submit: (text: string) => Promise<void>
+  onRun: (workspacePath: string, workflowRef: string, values: Record<string, string>) => void
   instantiateForEdit: (templateId: string, values: Record<string, string>, workspacePath: string) => void
 }): JSX.Element {
   const { template } = props
@@ -421,7 +440,6 @@ function TemplateDetail(props: {
     (parameter) => parameter.required && (inputs[parameter.id] ?? '').trim() === '',
   )
   const filled = Object.entries(inputs).filter(([, value]) => value.trim() !== '')
-  const paramFlags = filled.map(([id, value]) => `--param ${id}=${encodeURIComponent(value)}`).join(' ')
   return (
     <div className={styles.detail}>
       <h2 className={styles.detailTitle}>
@@ -458,7 +476,9 @@ function TemplateDetail(props: {
           type="button"
           className={styles.primary}
           disabled={missing.length > 0}
-          onClick={() => { void props.submit(`/workflow run ${template.id} ${paramFlags}`) }}
+          onClick={() => {
+            props.onRun(props.workspacePath, template.id, Object.fromEntries(filled))
+          }}
         >
           直接运行
         </button>
@@ -526,6 +546,7 @@ function WorkflowDetail(props: {
   workflow: StateWorkflowDto
   workspacePath: string
   submit: (text: string) => Promise<void>
+  onRun: (workspacePath: string, workflowRef: string, values: Record<string, string>) => void
   onEdit: (fileName: string) => void
 }): JSX.Element {
   const { workflow } = props
@@ -533,7 +554,6 @@ function WorkflowDetail(props: {
   const set = (id: string, value: string): void => { setInputs({ ...inputs, [id]: value }) }
   const fields = workflow.taskFields
   const filled = Object.entries(inputs).filter(([, value]) => value.trim() !== '')
-  const paramFlags = filled.map(([id, value]) => `--param ${id}=${encodeURIComponent(value)}`).join(' ')
   const missing = fields.filter((field) => field.required && (inputs[field.id] ?? '').trim() === '')
   return (
     <div className={styles.detail}>
@@ -557,7 +577,9 @@ function WorkflowDetail(props: {
           type="button"
           className={styles.primary}
           disabled={missing.length > 0}
-          onClick={() => { void props.submit(`/workflow run ${workflow.fileName} ${paramFlags}`) }}
+          onClick={() => {
+            props.onRun(props.workspacePath, workflow.fileName, Object.fromEntries(filled))
+          }}
         >
           运行
         </button>
@@ -672,6 +694,7 @@ function RunTopology(props: { run: StateRunDto }): JSX.Element | null {
         target: transition.to,
         label: transition.label ?? transition.verdict ?? '',
         style: { stroke: base, strokeWidth: isTaken ? 3 : 1.5, opacity: isTaken ? 1 : 0.4 },
+        markerEnd: { type: MarkerType.ArrowClosed, color: base, width: 16, height: 16 },
         labelStyle: { fill: '#e5e7eb', fontSize: 10, fontWeight: 600 },
         labelBgStyle: { fill: '#1f2937', fillOpacity: 0.95 },
         labelBgPadding: [6, 3] as [number, number],

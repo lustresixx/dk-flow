@@ -15,6 +15,7 @@ import {
   BackgroundVariant,
   Controls,
   Handle,
+  MarkerType,
   Position,
   ReactFlow,
   type Edge,
@@ -177,6 +178,12 @@ export function LiveRunPanel(props: LiveRunPanelProps): JSX.Element | null {
         source: transition.from,
         target: transition.to,
         label: transition.label ?? transition.verdict ?? '',
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          color: 'var(--dsw-alias-line-strong, #94a3b8)',
+          width: 16,
+          height: 16,
+        },
         className: [
           styles.edge,
           taken ? styles.edgeTaken : '',
