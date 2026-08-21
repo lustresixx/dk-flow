@@ -2,22 +2,24 @@
 
 [![npm](https://img.shields.io/badge/npm-dsh--ace--harness-blue)](https://github.com/lustresixx/dk-flow)
 [![license](https://img.shields.io/badge/license-Apache--2.0-green)](./LICENSE)
-[![tests](https://img.shields.io/badge/tests-186%20passing-brightgreen)](./tests)
+[![tests](https://img.shields.io/badge/tests-237%20passing-brightgreen)](./tests)
 [![node](https://img.shields.io/badge/node-%5E22.0.0%20%7C%7C%20%3E%3D24.0.0-informational)](#)
 
 把 ACEHarness 的工作流核心移植为 [DeepSeek Harness](https://github.com/deepseek-ai) 插件：**可视化编排的状态机工作流 + 对抗式多 Agent 评审 + 平台级运行治理**。目标是做成可部署到平台上的 workflow 产品内核（见 [docs/ROADMAP.md](./docs/ROADMAP.md)）。
 
 ## 特性
 
-- **状态机工作流**：状态串行/并行执行步骤，`success / fail` 二元流转（由 AI 判断，兼容旧 `pass / conditional_pass` YAML），熔断保护（最大转移数 / 最大自转移数）
+- **状态机工作流**：状态串行/并行执行步骤，`success / pass / conditional_pass / fail` 四类裁决驱动流转（`pass≡success`，`conditional_pass` 默认回退自转移、模板可显式前向），熔断保护（最大转移数 / 最大自转移数）
 - **四类节点**：AI 步骤（专属角色子代理 + 工具过滤）、快速 LLM（单轮直调，无子代理开销）、脚本（JS 沙箱 / Python 子进程，严格输入输出契约）、子工作流（嵌套 + 深度上限）
 - **对抗式多 Agent**：13 个内置角色（defender / attacker / judge / supervisor），红蓝评审、七角色接力评审、带人工审批门的架构重构评审等 8 个内置模板
-- **平台级运行治理**：断点恢复、崩溃自愈、人工审批门、风险自适应 supervisor、自动重试（指数退避）、步骤级超时、后台 job、停止即停、并发上限
+- **平台级运行治理**：断点恢复、崩溃自愈、**孤儿运行认领**（属主会话死亡后可由任意活动会话续跑并改绑）、人工审批门、风险自适应 supervisor、自动重试（指数退避）、步骤级超时、后台 job、停止即停、并发上限
 - **三大入口**：全屏工作台（React Flow 可视化编辑器 + 运行时拓扑图 + 流式侧边栏）、`/workflow` 斜杠命令族、模型工具（`workflow_list` / `run_workflow` / `workflow_manage`）
-- **单节点独立验证**：`/workflow test <工作流> <状态> <步骤>` 或编辑器里每个步骤的「▶ 验证」按钮——只跑一个节点看产出与 verdict，不跑整个工作流
+- **单节点独立验证**：`/workflow test <工作流> <状态> <步骤>` 或编辑器里每个步骤的「▶ 验证」按钮——只跑一个节点看产出与 verdict，不跑整个工作流；编辑器侧栏提供 **mock 输入框**（JSON → 脚本 `context.inputs` / `context.requirements`）
 - **每次运行独立沙箱**：JS 脚本在 worker 线程执行（独立内存 + 可靠超时终止，`while(true)` 也能杀）；Python 子进程在每次运行的沙箱目录中运行（独立 cwd、密钥脱敏环境、临时目录重定向）
 - **脚本与技能收集目录**：工作区 `.ace-workflows/scripts/` + 内置脚本库三级解析，`/workflow scripts` 清单；框架 skill 自动安装到 `$DSH_HOME/skills/`
-- **REST API**：状态聚合、工作流 CRUD、模板实例化、运行、流式进度、停止
+- **可追溯证据链**：每次运行生成带 `workflowHash`/`evidenceHash` 的审计日志（JSONL）；可选 **SQLite 归档**（控制面板开关、默认关）把运行与审计行镜像进 `<工作区>/.ace-workflows/archive.db`，跨会话查询、热点统计、可追溯
+- **会话绑定运行**：REST 启动运行可挂到某个活动根会话（`sessionId`），agent 步骤拉起真实子代理、审批门浮到其 GUI；`mode=job` 转后台作业即时返回 202
+- **REST API**：状态聚合、工作流 CRUD、模板实例化、运行、流式进度、停止、健康检查、运行统计、会话清单、归档查询
 
 ## 快速开始
 
@@ -45,7 +47,8 @@ dsh --profile my-profile --port 4090
 - **模板页**：8 个内置模板（结构预览 + 运行时参数表单），「直接运行」或「创建并编排」（创建不填参，留空的必填参数转为运行时询问）
 - **工作流页**：实例列表；运行参数在这里填写（缺必填项会被页面内拦下）；编排 / 删除
 - **运行记录页**：运行时拓扑图（状态按成功/失败着色、执行过的路径加亮）+ 状态时间线（每步输出、verdict、重试次数、supervisor 评分）+ 恢复 / 停止
-- **编辑器**：拖节点布局、右缘拖线连转移（成功/失败/无条件）、节点检查器编辑状态与步骤，保存即校验
+- **归档页**：SQLite 持久化开关（默认关、打开即回填存量运行）+ 归档运行列表 + 详情视图（证据链 + 审计时间线）
+- **编辑器**：拖节点布局、右缘拖线连转移（成功/失败/条件通过）、节点检查器编辑状态与步骤、侧栏 mock 输入 + 单步/单状态验证，保存即校验
 
 ### 斜杠命令
 
@@ -74,9 +77,15 @@ dsh --profile my-profile --port 4090
 | `GET /plugins/dsh-ace-harness/state` | 模板 / 工作流 / 运行聚合状态（可选 `?workspace=<path>`） |
 | `GET/POST /plugins/dsh-ace-harness/workflows/<file>` | 读取 / 保存工作流实例 |
 | `POST /plugins/dsh-ace-harness/instantiate` | 模板实例化（`{ templateId, values }`） |
-| `POST /plugins/dsh-ace-harness/run` | 启动运行并等待终态（`{ workspace, workflow, values }`） |
+| `POST /plugins/dsh-ace-harness/run` | 启动运行并等待终态（`{ workspace, workflow, values, sessionId?, mode? }`）；`mode=job` 时返回 202 `{runId, detached}` |
 | `GET /plugins/dsh-ace-harness/stream?runId=...` | 运行实时投影（拓扑、进度、每步输出） |
 | `POST /plugins/dsh-ace-harness/stop` | 停止运行 |
+| `GET /plugins/dsh-ace-harness/runs-history` | 运行历史前缀列表 + 单运行详情（`?prefix=` / `?runId=`） |
+| `GET /plugins/dsh-ace-harness/stats` | 工作区运行统计（总数、按状态、热点矩阵、活跃数） |
+| `GET /plugins/dsh-ace-harness/health` | 健康检查（并发占用、归档状态等） |
+| `GET /plugins/dsh-ace-harness/sessions` | 可承载运行的活动根会话清单 |
+| `POST /plugins/dsh-ace-harness/workspace-settings` | 工作区设置（`{ sqliteArchive: bool }`） |
+| `GET /plugins/dsh-ace-harness/archived-runs` | SQLite 归档查询（列表 / 详情 / 计数 / 统计投影） |
 
 ## 工作流 DSL
 
@@ -163,7 +172,7 @@ workflow:
 ```bash
 pnpm install
 pnpm typecheck    # 类型检查（宿主 + 客户端）
-pnpm test         # 177 个单元测试（含真实 Python 子进程用例）
+pnpm test         # 237 个单元测试（含真实 Python 子进程用例）
 pnpm build        # tsc + tsdown（宿主 + 浏览器 bundle）
 ```
 
