@@ -224,61 +224,74 @@ export class RunLifecycle {
     // foreground run into a background job instead (detachOnTurnAbort).
     const controller = new AbortController()
     registry.register(runId, controller)
-    this.deps.ensureSandboxDir(workspace, runId)
+    // P1-1: everything between `register` (which takes a concurrency slot)
+    // and handing the run to `settleEngineRun` (which settles + releases in a
+    // `finally`) runs under settlement coverage. A failure here — a broken
+    // `start` audit write or a git-baseline snapshot error — used to leak the
+    // slot forever (exhausting maxConcurrentRuns after a few failures), leave
+    // the stream stuck in `preparing`, and write no `end` audit row (需求②).
+    try {
+      this.deps.ensureSandboxDir(workspace, runId)
 
-    const state = createRunState({
-      runId,
-      workflowName: input.workflow.config.workflow.name,
-      configFile: input.workflow.configFile,
-      config: input.workflow.config,
-      inputs: input.inputs ?? {},
-      parentSessionId: input.parent.session.id,
-    })
+      const state = createRunState({
+        runId,
+        workflowName: input.workflow.config.workflow.name,
+        configFile: input.workflow.configFile,
+        config: input.workflow.config,
+        inputs: input.inputs ?? {},
+        parentSessionId: input.parent.session.id,
+      })
 
-    // Live streaming projection for the web panel.
-    registry.openStream({
-      runId,
-      workflowName: input.workflow.config.workflow.name,
-      config: input.workflow.config,
-      totalSteps: state.totalSteps,
-    })
+      // Live streaming projection for the web panel.
+      registry.openStream({
+        runId,
+        workflowName: input.workflow.config.workflow.name,
+        config: input.workflow.config,
+        totalSteps: state.totalSteps,
+      })
 
-    const executor = this.deps.makeExecutor(workspace, input.parent, runId, 1)
-    const options = this.engineOptions({
-      workspace,
-      parent: input.parent,
-      workflow: input.workflow,
-      runId,
-      executor,
-      signal: controller.signal,
-      load: () => loadRunState(workspace, runId, config.runDirName),
-      inputs: input.inputs ?? {},
-    })
+      const executor = this.deps.makeExecutor(workspace, input.parent, runId, 1)
+      const options = this.engineOptions({
+        workspace,
+        parent: input.parent,
+        workflow: input.workflow,
+        runId,
+        executor,
+        signal: controller.signal,
+        load: () => loadRunState(workspace, runId, config.runDirName),
+        inputs: input.inputs ?? {},
+      })
 
-    this.deps.ctx.emit('ace/workflow-start', { runId, workflowName: input.workflow.config.workflow.name })
-    await persistence.writeAudit(
-      workspace,
-      runId,
-      auditEvent('start', {
-        workflow: input.workflow.config.workflow.name,
-        // Tamper-evident: which exact workflow content launched this run.
-        workflowHash: sha256Text(JSON.stringify(input.workflow.config)),
-      }, state.startedAt),
-    )
+      this.deps.ctx.emit('ace/workflow-start', { runId, workflowName: input.workflow.config.workflow.name })
+      await persistence.writeAudit(
+        workspace,
+        runId,
+        auditEvent('start', {
+          workflow: input.workflow.config.workflow.name,
+          // Tamper-evident: which exact workflow content launched this run.
+          workflowHash: sha256Text(JSON.stringify(input.workflow.config)),
+        }, state.startedAt),
+      )
 
-    // Git baseline snapshot when the workflow runs against a repository.
-    const projectRoot = input.workflow.config.context?.projectRoot
-    if (projectRoot && input.workflow.config.context?.gitBaselineEnabled !== false) {
-      const snapshot = await captureGitSnapshot(projectRoot)
-      await saveGitSnapshot(workspace, runId, config.runDirName, 'baseline', null, snapshot)
+      // Git baseline snapshot when the workflow runs against a repository.
+      const projectRoot = input.workflow.config.context?.projectRoot
+      if (projectRoot && input.workflow.config.context?.gitBaselineEnabled !== false) {
+        const snapshot = await captureGitSnapshot(projectRoot)
+        await saveGitSnapshot(workspace, runId, config.runDirName, 'baseline', null, snapshot)
+      }
+
+      const begin = this.beginRun(workspace, runId, options)
+      const workflowName = input.workflow.config.workflow.name
+      if (input.mode === 'job') {
+        return { runId, ...this.detachAsJob(runId, input.parent, controller, begin, workflowName) }
+      }
+      return this.detachOnTurnAbort(runId, input.parent, controller, input.signal, begin(), workflowName)
+    } catch (error) {
+      // Settle as `failed` (end event + stream + end audit row) and free the
+      // slot, then rethrow so callers keep seeing the original rejection.
+      await this.settleStartupFailure(this.makeSettleDeps(), workspace, runId, error)
+      throw error
     }
-
-    const begin = this.beginRun(workspace, runId, options)
-    const workflowName = input.workflow.config.workflow.name
-    if (input.mode === 'job') {
-      return { runId, ...this.detachAsJob(runId, input.parent, controller, begin, workflowName) }
-    }
-    return this.detachOnTurnAbort(runId, input.parent, controller, input.signal, begin(), workflowName)
   }
 
   /**
@@ -388,46 +401,89 @@ export class RunLifecycle {
     const controller = new AbortController()
     this.deps.ensureSandboxDir(workspace, input.runId)
     registry.register(input.runId, controller)
-    // Rebuild the live stream projection from the persisted truth (P1-2⑤):
-    // a resumed run must be observable like a fresh one (/stream 200 with
-    // topology, verdicts, and the step log backfilled). The projection is
-    // idempotent; later persists refine the entry in place.
-    projectRunStateToStream(
-      registry.openStream({
+    // P1-1: same settlement coverage as startRun — a failure between register
+    // and the engine hand-off (e.g. the `resume` audit write) must settle the
+    // run terminally and release the slot instead of leaking it.
+    try {
+      // Rebuild the live stream projection from the persisted truth (P1-2⑤):
+      // a resumed run must be observable like a fresh one (/stream 200 with
+      // topology, verdicts, and the step log backfilled). The projection is
+      // idempotent; later persists refine the entry in place.
+      projectRunStateToStream(
+        registry.openStream({
+          runId: input.runId,
+          workflowName: persisted.workflowName,
+          config: workflow.config,
+          totalSteps: persisted.totalSteps,
+        }),
+        persisted,
+      )
+      const executor = this.deps.makeExecutor(workspace, input.parent, input.runId, 1)
+      const options = this.engineOptions({
+        workspace,
+        parent: input.parent,
+        workflow: { config: workflow.config, configFile: workflow.file },
         runId: input.runId,
-        workflowName: persisted.workflowName,
-        config: workflow.config,
-        totalSteps: persisted.totalSteps,
-      }),
-      persisted,
-    )
-    const executor = this.deps.makeExecutor(workspace, input.parent, input.runId, 1)
-    const options = this.engineOptions({
-      workspace,
-      parent: input.parent,
-      workflow: { config: workflow.config, configFile: workflow.file },
-      runId: input.runId,
-      executor,
-      signal: controller.signal,
-      load: () => loadRunState(workspace, input.runId, config.runDirName),
-      inputs: {},
-    })
-    // Traceable resume: mirror the 'start' audit row so a resumed run's log
-    // shows who continued it and when; adoption/status resets are recorded.
-    await persistence.writeAudit(
-      workspace,
-      input.runId,
-      auditEvent('resume', {
-        workflow: persisted.workflowName,
-        ...(adoptedFrom !== undefined ? { adoptedFrom } : {}),
-        ...(resetFrom !== undefined ? { resetFrom } : {}),
-      }),
-    )
-    const begin = this.beginRun(workspace, input.runId, options)
-    if (input.mode === 'job') {
-      return { runId: input.runId, ...this.detachAsJob(input.runId, input.parent, controller, begin, persisted.workflowName) }
+        executor,
+        signal: controller.signal,
+        load: () => loadRunState(workspace, input.runId, config.runDirName),
+        inputs: {},
+      })
+      // Traceable resume: mirror the 'start' audit row so a resumed run's log
+      // shows who continued it and when; adoption/status resets are recorded.
+      await persistence.writeAudit(
+        workspace,
+        input.runId,
+        auditEvent('resume', {
+          workflow: persisted.workflowName,
+          ...(adoptedFrom !== undefined ? { adoptedFrom } : {}),
+          ...(resetFrom !== undefined ? { resetFrom } : {}),
+        }),
+      )
+      const begin = this.beginRun(workspace, input.runId, options)
+      if (input.mode === 'job') {
+        return { runId: input.runId, ...this.detachAsJob(input.runId, input.parent, controller, begin, persisted.workflowName) }
+      }
+      return this.detachOnTurnAbort(input.runId, input.parent, controller, input.signal, begin(), persisted.workflowName)
+    } catch (error) {
+      await this.settleStartupFailure(this.makeSettleDeps(), workspace, input.runId, error)
+      throw error
     }
-    return this.detachOnTurnAbort(input.runId, input.parent, controller, input.signal, begin(), persisted.workflowName)
+  }
+
+  /**
+   * Build the terminal-settle seam. Shared by the engine settlement
+   * (`beginRun`) and the startup-failure handler (P1-1) so both paths settle
+   * through the one writer (`settleRunEnd`).
+   */
+  private makeSettleDeps(): SettleRunEndDeps {
+    const { registry, persistence } = this.deps
+    return {
+      registry,
+      persistence,
+      emitRunEnd: (payload) => this.deps.ctx.emit('ace/workflow-end', payload),
+    }
+  }
+
+  /**
+   * Settle a run that failed between `register` (which takes a concurrency
+   * slot) and handing it to `settleEngineRun` (P1-1): write the `end` audit
+   * row carrying the failure, settle the stream, and free the slot. The
+   * settle itself is best-effort — a broken audit write must not mask the
+   * original error or leak the slot, so cleanup and release always run.
+   */
+  private async settleStartupFailure(
+    deps: SettleRunEndDeps,
+    workspace: string,
+    runId: string,
+    error: unknown,
+  ): Promise<void> {
+    const message = error instanceof Error ? error.message : String(error)
+    await settleRunEnd(deps, workspace, runId, { status: 'failed', error: message, stateOutcomes: [] })
+      .catch(() => {})
+      .finally(() => {
+        deps.registry.release(runId)
+      })
   }
 
   /** Wrap the engine promise chain: end event, audit row, registry cleanup. */
@@ -436,12 +492,7 @@ export class RunLifecycle {
     runId: string,
     options: EngineRunOptions,
   ): () => Promise<RunResult> {
-    const { registry, persistence } = this.deps
-    const settleDeps: SettleRunEndDeps = {
-      registry,
-      persistence,
-      emitRunEnd: (payload) => this.deps.ctx.emit('ace/workflow-end', payload),
-    }
+    const settleDeps = this.makeSettleDeps()
     // P0-A: settlement lives OUTSIDE the engine's success callback. A
     // rejection (NO_INITIAL / NO_MATCH on a terminal state / load failure)
     // settles the run as `failed` with the error and writes the same `end`
