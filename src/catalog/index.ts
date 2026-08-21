@@ -4,7 +4,8 @@
  * package `files` list) and are resolved relative to this module.
  * @module dsh-ace-harness/catalog
  */
-import { readdir, readFile } from 'node:fs/promises'
+import { readdir, readFile, stat } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 import { parse } from 'yaml'
 import { parseTemplateManifest, parseWorkflowYaml } from '../dsl/load.js'
 import { agentDefinitionSchema } from '../dsl/schema.js'
@@ -78,6 +79,40 @@ export async function loadBuiltinAgents(): Promise<AgentDefinition[]> {
     agents.push(parsed.data)
   }
   return agents.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/**
+ * Highest file mtime (ms) across the packaged `agents/` and `workflows/`
+ * trees. A cheap change signal for hot reload: when a resource file is
+ * edited, this value advances and the catalog is re-read on the next access.
+ */
+export async function catalogFingerprint(): Promise<number> {
+  const root = resourcesRoot()
+  let max = 0
+  const walk = async (dir: URL): Promise<void> => {
+    let entries: import('node:fs').Dirent[]
+    try {
+      entries = await readdir(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      const url = new URL(entry.isDirectory() ? `${entry.name}/` : entry.name, dir)
+      if (entry.isDirectory()) {
+        await walk(url)
+      } else {
+        try {
+          const info = await stat(fileURLToPath(url))
+          if (info.mtimeMs > max) max = info.mtimeMs
+        } catch {
+          // Unreadable resource: skip.
+        }
+      }
+    }
+  }
+  await walk(new URL('agents/', root))
+  await walk(new URL('workflows/', root))
+  return max
 }
 
 /** Load every packaged workflow template, sorted by id then version. */

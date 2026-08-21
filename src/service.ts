@@ -22,6 +22,7 @@ import {
   firstCommentLine,
   latestTemplate,
   listBuiltinScripts,
+  catalogFingerprint,
   loadBuiltinAgents,
   loadBuiltinTemplates,
   readBuiltinTemplateSources,
@@ -154,6 +155,8 @@ export default class AceHarnessService extends Service {
   private agents: AgentDefinition[] = []
   private templates: BuiltinWorkflowTemplate[] = []
   private readonly catalogReady: Promise<void>
+  /** mtime fingerprint of the loaded catalog, for hot reload. */
+  private catalogFingerprintAt = 0
   private readonly archive = new SqliteArchive()
   /** TTL cache for the state route's archived-count badge (P1-2⑥). */
   private readonly archivedCountCache = new Map<string, { at: number; value: number }>()
@@ -217,23 +220,42 @@ export default class AceHarnessService extends Service {
 
   private async loadCatalog(): Promise<void> {
     ;[this.agents, this.templates] = await Promise.all([loadBuiltinAgents(), loadBuiltinTemplates()])
+    this.catalogFingerprintAt = await catalogFingerprint()
+  }
+
+  /**
+   * Hot-reload the built-in catalog (agents + templates) when a resource file
+   * changed since the last load. A broken edit keeps the last-good catalog and
+   * retries on the next access. Workflow INSTANCES already hot-reload — they
+   * are read from disk on every resolve — so this covers the packaged half.
+   */
+  private async revalidateCatalog(): Promise<void> {
+    await this.catalogReady
+    const fingerprint = await catalogFingerprint()
+    if (fingerprint === this.catalogFingerprintAt) return
+    try {
+      ;[this.agents, this.templates] = await Promise.all([loadBuiltinAgents(), loadBuiltinTemplates()])
+      this.catalogFingerprintAt = fingerprint
+    } catch (error) {
+      this.ctx.logger('ace-harness').warn(`catalog hot-reload failed (keeping last good): ${String(error)}`)
+    }
   }
 
   /** Resolve one catalog agent by name (after the catalog has loaded). */
   async agentByName(name: string): Promise<AgentDefinition | undefined> {
-    await this.catalogReady
+    await this.revalidateCatalog()
     return this.agents.find((agent) => agent.name === name)
   }
 
   /** List every built-in agent. */
   async listAgents(): Promise<AgentDefinition[]> {
-    await this.catalogReady
+    await this.revalidateCatalog()
     return [...this.agents]
   }
 
   /** List every built-in workflow template. */
   async listTemplates(): Promise<BuiltinWorkflowTemplate[]> {
-    await this.catalogReady
+    await this.revalidateCatalog()
     return [...this.templates]
   }
 
@@ -456,7 +478,7 @@ export default class AceHarnessService extends Service {
 
   /** The agent names available to workflow configs in this deployment. */
   async availableAgentNames(): Promise<Set<string>> {
-    await this.catalogReady
+    await this.revalidateCatalog()
     return new Set(this.agents.map((agent) => agent.name))
   }
 
@@ -471,7 +493,7 @@ export default class AceHarnessService extends Service {
     values: TemplateParameterValues,
     substitutions: AgentSubstitutions,
   ): Promise<InstantiatedWorkflow> {
-    await this.catalogReady
+    await this.revalidateCatalog()
     const candidates = this.templates.filter((template) => template.id === templateId)
     const template = version
       ? candidates.find((candidate) => candidate.version === version)
@@ -783,7 +805,7 @@ export default class AceHarnessService extends Service {
   ): Promise<{ config: WorkflowConfig; file: string } | null> {
     const instance = await loadWorkflow(workspace, configFile)
     if (instance) return { config: instance.config, file: instance.file }
-    await this.catalogReady
+    await this.revalidateCatalog()
     // Latest version wins (P1-1): the same rule every entry point applies.
     const template = latestTemplate(this.templates, configFile)
     if (template) return { config: template.config, file: configFile }

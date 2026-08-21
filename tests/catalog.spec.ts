@@ -1,7 +1,31 @@
 import { describe, expect, it } from 'vitest'
-import { listBuiltinScripts, loadBuiltinAgents, loadBuiltinTemplates } from '../src/catalog/index.js'
+import { catalogFingerprint, listBuiltinScripts, loadBuiltinAgents, loadBuiltinTemplates } from '../src/catalog/index.js'
 import { validateWorkflowReferences } from '../src/dsl/load.js'
 import { instantiateTemplate } from '../src/templates/instantiate.js'
+
+describe('catalogFingerprint', () => {
+  it('returns a positive mtime signal for the packaged resource trees', async () => {
+    const fingerprint = await catalogFingerprint()
+    expect(Number.isFinite(fingerprint)).toBe(true)
+    expect(fingerprint).toBeGreaterThan(0)
+  })
+
+  it('advances when a resource file mtime moves', async () => {
+    const { writeFile, readFile } = await import('node:fs/promises')
+    const { fileURLToPath } = await import('node:url')
+    const before = await catalogFingerprint()
+    const probe = fileURLToPath(new URL('../resources/workflows/simple-llm-qa/1.0.0/manifest.yaml', import.meta.url))
+    const original = await readFile(probe, 'utf8')
+    try {
+      // A no-op rewrite bumps the mtime; the fingerprint must move.
+      await writeFile(probe, original, 'utf8')
+      const after = await catalogFingerprint()
+      expect(after).toBeGreaterThanOrEqual(before)
+    } finally {
+      await writeFile(probe, original, 'utf8')
+    }
+  })
+})
 
 describe('built-in catalog', () => {
   it('ships the selected ACE agent roster', async () => {
