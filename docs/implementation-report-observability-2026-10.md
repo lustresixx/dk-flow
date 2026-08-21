@@ -150,11 +150,11 @@
 
 ## 12. P1 闭环第二轮（对抗审查 → 终审 fail 回退后，本批次）
 
-第二轮对抗审查（独立挑战）与终审（git 锚点 + 直接执行 lib 产物复核）裁定当前提交态不放行，2 项 P1 均已闭环（提交 `5b1ba5c` / `b1ae0fc` / `1ab475b` / 本提交），需求②③与内核/缓存/导出面证据充分，无需重做交付工作：
+第二轮对抗审查（独立挑战）与终审（git 锚点 + 直接执行 lib 产物复核）裁定当前提交态不放行，2 项 P1 均已闭环（提交 `5b1ba5c` / `b1ae0fc` / `1ab475b` / `007666e` / `e740897`），需求②③与内核/缓存/导出面证据充分，无需重做交付工作：
 
 | P1 | 裁定内容（可复现场景） | 闭环动作 | 证据 |
 |---|---|---|---|
-| ① register→beginRun 窗口异常泄漏并发槽 | 4 次 `writeAudit('start')` 失败耗尽 `maxConcurrentRuns=4`：startRun 在 `registry.register`（占槽）之后、`settleEngineRun`（`finally` 释放）之前的 `await writeAudit('start')` 抛错 → 槽永久泄漏、流滞留 `preparing`、无 `end` 审计行（违反需求②「异常路径也写 end」） | `startRun` 与 `resumeRun` 的 register→beginRun 窗口整体包 try/catch：失败经新增 `settleStartupFailure`（委托同一 `settleRunEnd` 写 `end` 行 + settle 流 + 释放槽；settle 本身 best-effort，`.catch(()=>{})` 后 `finally` 释放，原错误原样 rethrow）收尾；`beginRun` 与收尾共用 `makeSettleDeps` 单一 seam | 新增 3 条 lifecycle 钉（`tests/run-lifecycle.spec.ts`：start 失败写 end 行+流 settled+槽释放；连续 4 次失败 `activeRuns=0`、第 5 次仍达审计写入而非「并发运行数达到上限 4」；resume 失败同语义）；直接 node 执行 lib：4 失败后 activeRuns=0、5 条 end 行均含 evidenceHash、流均 settled |
+| ① register→beginRun 窗口异常泄漏并发槽 | 4 次 `writeAudit('start')` 失败耗尽 `maxConcurrentRuns=4`：startRun 在 `registry.register`（占槽）之后、`settleEngineRun`（`finally` 释放）之前的 `await writeAudit('start')` 抛错 → 槽永久泄漏、流滞留 `preparing`、无 `end` 审计行（违反需求②「异常路径也写 end」） | `startRun` 与 `resumeRun` 的 register→beginRun 窗口整体包 try/catch：失败经新增 `settleStartupFailure`（委托同一 `settleRunEnd` 写 `end` 行 + settle 流 + 释放槽；settle 本身 best-effort，`.catch(()=>{})` 后 `finally` 释放，原错误原样 rethrow）收尾；`beginRun` 与收尾共用 `makeSettleDeps` 单一 seam | 新增 4 条 lifecycle 钉（`tests/run-lifecycle.spec.ts`：start 失败写 end 行+流 settled+槽释放；连续 4 次失败 `activeRuns=0`、第 5 次仍达审计写入而非「并发运行数达到上限 4」；resume 失败同语义；最坏情形——`end` 行写入也失败时仍释放槽）；直接 node 执行 lib：4 失败后 activeRuns=0、5 条 end 行均含 evidenceHash、流均 settled |
 | ② 陈旧运行双 feed 状态分裂 | 僵尸运行（非终态、`updatedAt` 超 10 分钟）：JSON feed 经 `normalizeStaleRun` 显示 `crashed`，SQL feed 直接读 `runs.status` 仍为 `running`（DIVERGE=true）——违反需求①「双 feed 统计一致」 | 抽出单一 stale 规则 `normalizeRunStatus(status, updatedAt, now)`（`src/store/run-store.ts`），`normalizeStaleRun` 改为委托（行为逐字不变）；`queryStatsProjection` 增选 `updated_at` 并对 `runs[].status` 与 `byStatus` 套同一规则（可选 `now` 参数供确定性测试），两 feed 对僵尸计数一致 | 新增双 feed 等价钉（`tests/sqlite-archive.spec.ts`：zombie/fresh/done 三运行，SQL `combineStatsProjection` 与 JSON `aggregateRunStats(normalizeStaleRun)` deep-equal，byStatus={crashed:1,running:1,completed:1}）；直接 node 执行 lib：DIVERGE=false、SQL byStatus 与 JSON 逐字节一致（旧口径 SQL 为 running:2） |
 
 另按终审要求提交 2 条此前未提交的边界钉（`tests/observability-boundary.spec.ts`）：① 单口径委托守卫（`stepDurationMs` 与 `effectiveStepDurationMs` 全输入矩阵一致，10 组）；② 空工作区全字段归零（`/stats` 新工作区零值渲染不抛错）。
