@@ -249,7 +249,13 @@ describe('startRun / resumeRun startup-window settlement (P1-1)', () => {
     emitted: Array<{ runId: string; status: string }>
   }
 
-  function makeLifecycleHarness(options: { failStartAudit: boolean; failResumeAudit: boolean }): LifecycleHarness {
+  function makeLifecycleHarness(options: {
+    failStartAudit: boolean
+    failResumeAudit: boolean
+    /** Persistent audit-destination failure: EVERY write throws, including
+     * the settle's `end` row — the exact worst case of the P1-1 repro. */
+    failAllAudits?: boolean
+  }): LifecycleHarness {
     const registry = new RunRegistry()
     const emitted: Array<{ runId: string; status: string }> = []
     const persistence = new RunPersistence({
@@ -268,6 +274,7 @@ describe('startRun / resumeRun startup-window settlement (P1-1)', () => {
     const guarded = Object.create(persistence) as RunPersistence
     guarded.writeAudit = async (ws, runId, event) => {
       const kind = event['event']
+      if (options.failAllAudits) throw new Error(`audit boom: ${kind}`)
       if ((options.failStartAudit && kind === 'start') || (options.failResumeAudit && kind === 'resume')) {
         throw new Error(`audit boom: ${kind}`)
       }
@@ -346,6 +353,22 @@ describe('startRun / resumeRun startup-window settlement (P1-1)', () => {
     await expect(lifecycle.startRun(startArgs())).rejects.toThrow('audit boom: start')
     expect(registry.counts().activeRuns).toBe(0)
     expect(emitted.filter((entry) => entry.status === 'failed')).toHaveLength(5)
+  })
+
+  it('releases the slot even when the end-row settle write also fails (P1-1 worst case)', async () => {
+    // The repro's audit destination is BROKEN, so the settle's `end` write
+    // fails too. Cleanup must still run: the end event fires (it precedes
+    // the audit write in settleRunEnd), the stream settles, and the slot is
+    // released — a persistent audit failure must not wedge the runner.
+    const harness = makeLifecycleHarness({ failStartAudit: false, failResumeAudit: false, failAllAudits: true })
+    const { lifecycle, registry, emitted } = harness
+    await expect(lifecycle.startRun(startArgs())).rejects.toThrow('audit boom: start')
+    expect(registry.counts().activeRuns).toBe(0)
+    const firstEmitted = emitted[0]
+    expect(firstEmitted).toBeTruthy()
+    expect(firstEmitted!.status).toBe('failed')
+    expect(registry.streams.get(firstEmitted!.runId)?.status).toBe('failed')
+    expect(registry.isActive(firstEmitted!.runId)).toBe(false)
   })
 
   it('settles a run whose resume audit write fails: end row, stream settled, slot released', async () => {
