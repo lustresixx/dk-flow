@@ -24,9 +24,10 @@ import {
   type EngineRunOptions,
   type RunResult,
   type RunState,
+  type StateOutcome,
   type StepExecutor,
 } from './engine/types.js'
-import { runDurationMs, sha256Text } from './store/audit-events.js'
+import { auditEvent, runDurationMs, sha256Text } from './store/audit-events.js'
 import { captureGitSnapshot, saveGitSnapshot } from './store/git-baseline.js'
 import { loadRunState, saveRunState } from './store/run-store.js'
 import type { AceHarnessConfig } from './service.js'
@@ -54,6 +55,95 @@ export interface AceRunHandle {
    */
   detachedJobId?: JobId
   result: Promise<RunResult>
+}
+
+/**
+ * Terminal settle inputs shared by the success and rejection paths: what the
+ * `end` audit row records. On the success path the engine result is used
+ * verbatim; on a rejection (startup validation errors that never executed a
+ * step) the run settles as `failed` with the error message and no outcomes.
+ */
+export interface RunSettleResult {
+  status: RunState['status']
+  error: string | null
+  stateOutcomes: StateOutcome[]
+}
+
+/** Host seams the terminal settlement draws on (P0-A / P1-A). */
+export interface SettleRunEndDeps {
+  registry: RunRegistry
+  persistence: RunPersistence
+  /** Emit the frozen `ace/workflow-end` cordis event. */
+  emitRunEnd: (payload: { runId: string; status: string }) => void
+}
+
+/**
+ * Settle one run terminally on BOTH paths (P0-A): emit the end event, mark
+ * the live stream settled (which schedules its prune), release the audit diff
+ * cursor, and append the `end` audit row carrying status / error / evidence
+ * hash / run duration. Extracted as a seam (P1-A) so the rejection path —
+ * engine startup validation errors that reject before any step runs — gets
+ * the same terminal row the success path does, and so the behavior is
+ * unit-testable without a live host. The audit row shape is frozen by the
+ * archive replay and the e2e contract; this function is the one writer.
+ */
+export async function settleRunEnd(
+  deps: SettleRunEndDeps,
+  workspace: string,
+  runId: string,
+  result: RunSettleResult,
+): Promise<void> {
+  deps.emitRunEnd({ runId, status: result.status })
+  deps.registry.settleStream(runId, result.status)
+  deps.registry.finishRun(runId)
+  await deps.persistence.writeAudit(
+    workspace,
+    runId,
+    auditEvent('end', {
+      status: result.status,
+      error: result.error,
+      // Tamper-evident evidence-chain digest + run wall clock.
+      evidenceHash: sha256Text(JSON.stringify(result.stateOutcomes)),
+      durationMs: runDurationMs(result.stateOutcomes),
+    }),
+  )
+}
+
+/**
+ * Wrap one engine run promise with terminal settlement on both paths. The
+ * success path settles with the engine result; a rejection (engine startup
+ * validation — NO_INITIAL / NO_MATCH on a terminal state / a failing load —
+ * or any error escaping the engine's own catch) settles as `failed` with the
+ * error message and rethrows, so callers keep seeing the rejection exactly as
+ * before. `registry.release` always runs via `finally`. The settle runs at
+ * most once: a settle failure (e.g. an audit write error) cannot double-write
+ * the `end` row or mask the original outcome.
+ */
+export function settleEngineRun(
+  deps: SettleRunEndDeps,
+  workspace: string,
+  runId: string,
+  run: Promise<RunResult>,
+): Promise<RunResult> {
+  let settled = false
+  const settleOnce = async (result: RunSettleResult): Promise<void> => {
+    if (settled) return
+    settled = true
+    await settleRunEnd(deps, workspace, runId, result)
+  }
+  return run
+    .then(async (runResult) => {
+      await settleOnce(runResult)
+      return runResult
+    })
+    .catch(async (error) => {
+      const message = error instanceof Error ? error.message : String(error)
+      await settleOnce({ status: 'failed', error: message, stateOutcomes: [] })
+      throw error
+    })
+    .finally(() => {
+      deps.registry.release(runId)
+    })
 }
 
 /** How a run executes: awaited by the caller or detached as a DSH job. */
@@ -166,13 +256,15 @@ export class RunLifecycle {
     })
 
     this.deps.ctx.emit('ace/workflow-start', { runId, workflowName: input.workflow.config.workflow.name })
-    await persistence.writeAudit(workspace, runId, {
-      at: state.startedAt,
-      event: 'start',
-      workflow: input.workflow.config.workflow.name,
-      // Tamper-evident: which exact workflow content launched this run.
-      workflowHash: sha256Text(JSON.stringify(input.workflow.config)),
-    })
+    await persistence.writeAudit(
+      workspace,
+      runId,
+      auditEvent('start', {
+        workflow: input.workflow.config.workflow.name,
+        // Tamper-evident: which exact workflow content launched this run.
+        workflowHash: sha256Text(JSON.stringify(input.workflow.config)),
+      }, state.startedAt),
+    )
 
     // Git baseline snapshot when the workflow runs against a repository.
     const projectRoot = input.workflow.config.context?.projectRoot
@@ -322,13 +414,15 @@ export class RunLifecycle {
     })
     // Traceable resume: mirror the 'start' audit row so a resumed run's log
     // shows who continued it and when; adoption/status resets are recorded.
-    await persistence.writeAudit(workspace, input.runId, {
-      at: new Date().toISOString(),
-      event: 'resume',
-      workflow: persisted.workflowName,
-      ...(adoptedFrom !== undefined ? { adoptedFrom } : {}),
-      ...(resetFrom !== undefined ? { resetFrom } : {}),
-    })
+    await persistence.writeAudit(
+      workspace,
+      input.runId,
+      auditEvent('resume', {
+        workflow: persisted.workflowName,
+        ...(adoptedFrom !== undefined ? { adoptedFrom } : {}),
+        ...(resetFrom !== undefined ? { resetFrom } : {}),
+      }),
+    )
     const begin = this.beginRun(workspace, input.runId, options)
     if (input.mode === 'job') {
       return { runId: input.runId, ...this.detachAsJob(input.runId, input.parent, controller, begin, persisted.workflowName) }
@@ -343,26 +437,17 @@ export class RunLifecycle {
     options: EngineRunOptions,
   ): () => Promise<RunResult> {
     const { registry, persistence } = this.deps
-    return () =>
-      runStateMachine(options)
-        .then(async (runResult) => {
-          this.deps.ctx.emit('ace/workflow-end', { runId, status: runResult.status })
-          registry.settleStream(runId, runResult.status)
-          registry.finishRun(runId)
-          await persistence.writeAudit(workspace, runId, {
-            at: new Date().toISOString(),
-            event: 'end',
-            status: runResult.status,
-            error: runResult.error,
-            // Tamper-evident evidence-chain digest + run wall clock.
-            evidenceHash: sha256Text(JSON.stringify(runResult.stateOutcomes)),
-            durationMs: runDurationMs(runResult.stateOutcomes),
-          })
-          return runResult
-        })
-        .finally(() => {
-          registry.release(runId)
-        })
+    const settleDeps: SettleRunEndDeps = {
+      registry,
+      persistence,
+      emitRunEnd: (payload) => this.deps.ctx.emit('ace/workflow-end', payload),
+    }
+    // P0-A: settlement lives OUTSIDE the engine's success callback. A
+    // rejection (NO_INITIAL / NO_MATCH on a terminal state / load failure)
+    // settles the run as `failed` with the error and writes the same `end`
+    // audit row the success path does; the stream settles (and gets pruned)
+    // and the audit cursor is released on both paths.
+    return () => settleEngineRun(settleDeps, workspace, runId, runStateMachine(options))
   }
 
   /** Detach an engine run as a DSH background job owned by the parent agent. */

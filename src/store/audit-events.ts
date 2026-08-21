@@ -19,6 +19,33 @@ export interface RunProgressTrack {
 
 export const EMPTY_PROGRESS_TRACK: RunProgressTrack = { states: 0, waiting: false }
 
+/**
+ * The audit event names the chain can carry. The set is the single writer's
+ * vocabulary (P1-C): start / resume / end come from the run lifecycle, the
+ * derived events come from `progressAuditEvents`, and every row is built by
+ * `auditEvent` before it reaches `writeAudit`.
+ */
+export type AuditEventKind = 'start' | 'resume' | 'end' | 'state-end' | 'waiting-human' | 'human-resolved'
+
+/** One audit row: `at` + `event` are always present, the rest is event data. */
+export type AuditEventRow = Record<string, unknown>
+
+/**
+ * Single construction point for every audit row (P1-C). All call sites —
+ * lifecycle start/resume/end, the persist pipeline's derived events, and the
+ * terminal settle paths — build their rows through this factory so the event
+ * vocabulary and the `at`/`event` placement cannot drift apart. The returned
+ * shape stays a plain record: the JSONL append and the SQLite mirror consume
+ * whatever fields a row carries.
+ */
+export function auditEvent(
+  kind: AuditEventKind,
+  fields: AuditEventRow = {},
+  at = new Date().toISOString(),
+): AuditEventRow {
+  return { at, event: kind, ...fields }
+}
+
 /** Wall-clock duration of one state outcome from its step timestamps. */
 function outcomeDurationMs(outcome: StateOutcome): number | null {
   const starts = outcome.steps.map((step) => Date.parse(step.startedAt)).filter(Number.isFinite)
@@ -47,29 +74,29 @@ export function progressAuditEvents(
   const events: Array<Record<string, unknown>> = []
   for (let index = tracked.states; index < state.stateOutcomes.length; index += 1) {
     const outcome = state.stateOutcomes[index]!
-    events.push({
-      at: outcome.finishedAt ?? now,
-      event: 'state-end',
-      state: outcome.state,
-      verdict: outcome.verdict.verdict,
-      steps: outcome.steps.length,
-      durationMs: outcomeDurationMs(outcome),
-    })
+    events.push(
+      auditEvent('state-end', {
+        state: outcome.state,
+        verdict: outcome.verdict.verdict,
+        steps: outcome.steps.length,
+        durationMs: outcomeDurationMs(outcome),
+      }, outcome.finishedAt ?? now),
+    )
   }
   let waiting = tracked.waiting
   if (state.status === 'waiting-human' && !waiting) {
     waiting = true
-    events.push({
-      at: now,
-      event: 'waiting-human',
-      state: state.pendingHuman?.state ?? state.currentState ?? '',
-      kind: state.pendingHuman?.kind ?? 'approval',
-      candidates: state.pendingHuman?.candidates ?? [],
-    })
+    events.push(
+      auditEvent('waiting-human', {
+        state: state.pendingHuman?.state ?? state.currentState ?? '',
+        kind: state.pendingHuman?.kind ?? 'approval',
+        candidates: state.pendingHuman?.candidates ?? [],
+      }, now),
+    )
   } else if (state.status !== 'waiting-human' && waiting) {
     // A human decision (or stop) resolved the wait; close the marker.
     waiting = false
-    events.push({ at: now, event: 'human-resolved', state: state.currentState ?? '' })
+    events.push(auditEvent('human-resolved', { state: state.currentState ?? '' }, now))
   }
   return { events, next: { states: state.stateOutcomes.length, waiting } }
 }

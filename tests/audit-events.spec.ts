@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { RunState } from '../src/engine/types.ts'
-import { EMPTY_PROGRESS_TRACK, progressAuditEvents, runDurationMs, sha256Text } from '../src/store/audit-events.ts'
+import {
+  auditEvent,
+  EMPTY_PROGRESS_TRACK,
+  progressAuditEvents,
+  runDurationMs,
+  sha256Text,
+} from '../src/store/audit-events.ts'
 
 function makeState(overrides: Partial<RunState>): RunState {
   return {
@@ -87,6 +93,28 @@ describe('progressAuditEvents', () => {
     expect(resolved.events).toEqual([expect.objectContaining({ event: 'human-resolved', state: '继续' })])
     const after = progressAuditEvents(resolved.next, makeState({ status: 'running', currentState: '继续' }))
     expect(after.events).toHaveLength(0)
+  })
+})
+
+describe('auditEvent (P1-C single construction point)', () => {
+  it('always places at/event first and merges the event fields', () => {
+    const row = auditEvent('end', { status: 'completed', evidenceHash: 'abc' }, '2026-01-01T00:00:00.000Z')
+    expect(row).toEqual({ at: '2026-01-01T00:00:00.000Z', event: 'end', status: 'completed', evidenceHash: 'abc' })
+  })
+
+  it('defaults `at` to the current wall clock', () => {
+    const before = Date.now()
+    const row = auditEvent('start', { workflow: 'wf' })
+    expect(row.event).toBe('start')
+    expect(typeof row.at).toBe('string')
+    expect(Date.parse(row.at as string)).toBeGreaterThanOrEqual(before)
+  })
+
+  it('carries every event kind through the same row shape', () => {
+    for (const kind of ['start', 'resume', 'end', 'state-end', 'waiting-human', 'human-resolved'] as const) {
+      expect(auditEvent(kind).event).toBe(kind)
+      expect(typeof auditEvent(kind).at).toBe('string')
+    }
   })
 })
 
