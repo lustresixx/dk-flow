@@ -147,3 +147,16 @@
 | ③ 崩溃窗口主张过宽 | 本报告初版「崩溃（进程被杀）写 end 仍由 `normalizeStaleRun` 读时兜底」表述误导：进程死亡无代码可执行，`normalizeStaleRun` 只读时把内存中的状态显示为 `crashed`，**不写 audit、不写 state.json**——是显示层兜底而非审计兜底 | §9.5 已收窄为准确边界：end 事件保证范围 = 进程内可到达的异常/中断/超时终态路径；进程级被杀不写 end；`normalizeStaleRun` 仅显示层兜底（既有 `tests/stale-run.spec.ts`「不触碰文件」断言即此语义的钉） | 本提交（§9.5 修订） |
 
 **残余门禁（宿主）**：`pnpm install --frozen-lockfile && pnpm test`（35 文件 / 292 用例：288 + 本批次 DIVERGE 钉 1 条 + effectiveStepDurationMs 3 条）与 `node scripts/e2e-platform.mjs`（/stats 新鲜断言 + p95 预算）仍为唯一权威对照——本沙箱 `spawn EPERM` 环境边界不变（本批次桥实测 35 文件 / 278 pass / 4 fail，4 个失败全部为 `pre-commands.spec.ts` 真实 shell 子进程的 EPERM 环境边界，非回归）。
+
+## 12. P1 闭环第二轮（对抗审查 → 终审 fail 回退后，本批次）
+
+第二轮对抗审查（独立挑战）与终审（git 锚点 + 直接执行 lib 产物复核）裁定当前提交态不放行，2 项 P1 均已闭环（提交 `5b1ba5c` / `b1ae0fc` / `1ab475b` / 本提交），需求②③与内核/缓存/导出面证据充分，无需重做交付工作：
+
+| P1 | 裁定内容（可复现场景） | 闭环动作 | 证据 |
+|---|---|---|---|
+| ① register→beginRun 窗口异常泄漏并发槽 | 4 次 `writeAudit('start')` 失败耗尽 `maxConcurrentRuns=4`：startRun 在 `registry.register`（占槽）之后、`settleEngineRun`（`finally` 释放）之前的 `await writeAudit('start')` 抛错 → 槽永久泄漏、流滞留 `preparing`、无 `end` 审计行（违反需求②「异常路径也写 end」） | `startRun` 与 `resumeRun` 的 register→beginRun 窗口整体包 try/catch：失败经新增 `settleStartupFailure`（委托同一 `settleRunEnd` 写 `end` 行 + settle 流 + 释放槽；settle 本身 best-effort，`.catch(()=>{})` 后 `finally` 释放，原错误原样 rethrow）收尾；`beginRun` 与收尾共用 `makeSettleDeps` 单一 seam | 新增 3 条 lifecycle 钉（`tests/run-lifecycle.spec.ts`：start 失败写 end 行+流 settled+槽释放；连续 4 次失败 `activeRuns=0`、第 5 次仍达审计写入而非「并发运行数达到上限 4」；resume 失败同语义）；直接 node 执行 lib：4 失败后 activeRuns=0、5 条 end 行均含 evidenceHash、流均 settled |
+| ② 陈旧运行双 feed 状态分裂 | 僵尸运行（非终态、`updatedAt` 超 10 分钟）：JSON feed 经 `normalizeStaleRun` 显示 `crashed`，SQL feed 直接读 `runs.status` 仍为 `running`（DIVERGE=true）——违反需求①「双 feed 统计一致」 | 抽出单一 stale 规则 `normalizeRunStatus(status, updatedAt, now)`（`src/store/run-store.ts`），`normalizeStaleRun` 改为委托（行为逐字不变）；`queryStatsProjection` 增选 `updated_at` 并对 `runs[].status` 与 `byStatus` 套同一规则（可选 `now` 参数供确定性测试），两 feed 对僵尸计数一致 | 新增双 feed 等价钉（`tests/sqlite-archive.spec.ts`：zombie/fresh/done 三运行，SQL `combineStatsProjection` 与 JSON `aggregateRunStats(normalizeStaleRun)` deep-equal，byStatus={crashed:1,running:1,completed:1}）；直接 node 执行 lib：DIVERGE=false、SQL byStatus 与 JSON 逐字节一致（旧口径 SQL 为 running:2） |
+
+另按终审要求提交 2 条此前未提交的边界钉（`tests/observability-boundary.spec.ts`）：① 单口径委托守卫（`stepDurationMs` 与 `effectiveStepDurationMs` 全输入矩阵一致，10 组）；② 空工作区全字段归零（`/stats` 新工作区零值渲染不抛错）。
+
+**本批次实测**（沙箱测试桥，vitest 宿主复跑为唯一权威对照）：全量 35 文件 / 284 pass / 4 fail（4 个全部为 `pre-commands.spec.ts` spawn EPERM 环境边界，该文件与基线 diff 为空，非回归）；`run-lifecycle` 7/7、`sqlite-archive` 13/13、`observability-boundary` 18/18、`run-stats` 12/12、`stale-run` 4/4、`audit-events` 10/10；typecheck（双 tsconfig）与 build 全绿；host 导出 `[Config,apply,inject,name]` 逐字不变；触碰模块仅新增 additive 键/函数（`normalizeRunStatus`、`queryStatsProjection` 可选 `now`、私有方法），公开 API 与既有导出面不变；无新运行时依赖；无破坏性 git 操作（无 reset/checkout/clean），前序未跟踪文档原样保留。
