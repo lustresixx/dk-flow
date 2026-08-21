@@ -124,7 +124,57 @@ describe('SqliteArchive', () => {
     expect(projection.byStatus).toContainEqual({ status: 'completed', count: 1 })
     expect(projection.byStatus).toContainEqual({ status: 'failed', count: 1 })
     expect(projection.runs).toHaveLength(2)
+    expect(projection.runs[0]?.status).toBe('completed')
     expect(projection.stateVerdicts).toContainEqual({ state: '状态一', verdict: 'success', count: 2 })
+    // Step rows ride along from state_json (P0-B): makeRun carries one step
+    // per run; old rows have no attempts/durationMs → null.
+    expect(projection.steps).toHaveLength(2)
+    expect(projection.steps[0]).toMatchObject({ state: '状态一', step: '步骤A', verdict: 'success', attempts: null, durationMs: null })
+    expect(projection.failedSteps).toEqual([])
+    archive.close()
+  })
+
+  it('extracts attempts, durations, and failed steps from state_json', () => {
+    const archive = new SqliteArchive()
+    archive.archiveRun(workspace, '.ace-workflows', makeRun('run-step', {
+      stateOutcomes: [
+        {
+          state: '状态一',
+          verdict: { verdict: 'success', issues: [], rationale: '通过' },
+          steps: [
+            {
+              key: '状态一/步骤A',
+              state: '状态一',
+              step: '步骤A',
+              type: 'script',
+              outputSummary: '产出A',
+              verdict: { verdict: 'success', issues: [], rationale: '产出A' },
+              startedAt: '2026-08-20T10:00:00.000Z',
+              finishedAt: '2026-08-20T10:00:00.500Z',
+              durationMs: 480,
+              attempts: 2,
+            },
+          ],
+          finishedAt: '2026-08-20T10:00:00.500Z',
+        },
+      ],
+      failedSteps: [
+        {
+          key: '状态一/步骤B',
+          state: '状态一',
+          step: '步骤B',
+          type: 'agent',
+          error: '一直失败',
+          attempts: 3,
+          startedAt: '2026-08-20T09:59:00.000Z',
+          finishedAt: '2026-08-20T09:59:10.000Z',
+        },
+      ],
+    }))
+    const projection = archive.queryStatsProjection(workspace, '.ace-workflows')
+    expect(projection.steps).toHaveLength(1)
+    expect(projection.steps[0]).toMatchObject({ state: '状态一', step: '步骤A', verdict: 'success', attempts: 2, durationMs: 480 })
+    expect(projection.failedSteps).toEqual([{ state: '状态一', step: '步骤B', attempts: 3 }])
     archive.close()
   })
 

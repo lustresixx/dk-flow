@@ -36,6 +36,7 @@ import { workspaceRoot } from './store/paths.js'
 import { listRunStates, loadRunState } from './store/run-store.js'
 import { SqliteArchive, type ArchivedAuditRow, type ArchivedRunRow } from './store/sqlite-archive.js'
 import { aggregateRunStats, combineStatsProjection, type WorkspaceRunStats } from './store/run-stats.js'
+import { stepDurationMs } from './store/audit-events.js'
 import { readWorkspaceSettings, writeWorkspaceSettings } from './store/workspace-settings.js'
 import { deleteWorkflow, listWorkflows, loadWorkflow, saveWorkflow, type WorkflowEntry } from './store/workflow-store.js'
 import {
@@ -712,6 +713,22 @@ export default class AceHarnessService extends Service {
             states: state.stateOutcomes.map((outcome) => ({
               state: outcome.state,
               verdict: outcome.verdict.verdict,
+            })),
+            // Step-level feed (P0-B): completed steps with effective durations
+            // plus the failure history (steps that threw have no StepOutcome).
+            steps: state.stateOutcomes.flatMap((outcome) =>
+              outcome.steps.map((step) => ({
+                state: step.state,
+                step: step.step,
+                verdict: step.verdict?.verdict ?? null,
+                attempts: step.attempts ?? null,
+                durationMs: stepDurationMs(step),
+              })),
+            ),
+            failedSteps: (state.failedSteps ?? []).map((failed) => ({
+              state: failed.state,
+              step: failed.step,
+              attempts: failed.attempts ?? null,
             })),
           })),
         )

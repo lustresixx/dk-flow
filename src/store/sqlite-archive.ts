@@ -315,24 +315,29 @@ export class SqliteArchive {
   }
 
   /**
-   * SQL-side statistics projection: status counts, run timestamps, and the
-   * (state, verdict) matrix extracted from state_json with JSON1.
+   * SQL-side statistics projection: per-run status/timestamps, the
+   * (state, verdict) matrix, raw step rows, and failed-step rows — all
+   * extracted from state_json with JSON1. The raw step/failed rows feed the
+   * same aggregation kernel the JSON scan uses (P1-B), so the SQL feed and
+   * the file feed answer byte-identical statistics.
    */
   queryStatsProjection(
     workspace: string,
     runDirName: string,
   ): {
     byStatus: Array<{ status: string; count: number }>
-    runs: Array<{ startedAt: string; finishedAt: string | null }>
+    runs: Array<{ startedAt: string; finishedAt: string | null; status: string }>
     stateVerdicts: Array<{ state: string; verdict: string; count: number }>
+    steps: Array<{ state: string; step: string; verdict: string | null; attempts: number | null; durationMs: number | null }>
+    failedSteps: Array<{ state: string; step: string; attempts: number | null }>
   } {
     const db = this.open(workspace, runDirName)
     const byStatus = db
       .prepare('SELECT status, COUNT(*) AS n FROM runs GROUP BY status')
       .all() as unknown as Array<{ status: string; n: number }>
     const runs = db
-      .prepare('SELECT started_at, finished_at FROM runs')
-      .all() as unknown as Array<{ started_at: string; finished_at: string | null }>
+      .prepare('SELECT started_at, finished_at, status FROM runs')
+      .all() as unknown as Array<{ started_at: string; finished_at: string | null; status: string }>
     const stateVerdicts = db
       .prepare(
         `SELECT json_extract(j.value, '$.state') AS state,
@@ -342,12 +347,56 @@ export class SqliteArchive {
          GROUP BY 1, 2`,
       )
       .all() as unknown as Array<{ state: string; verdict: string; n: number }>
+    const steps = db
+      .prepare(
+        `SELECT json_extract(o.value, '$.state') AS state,
+                json_extract(j.value, '$.step') AS step,
+                json_extract(j.value, '$.verdict.verdict') AS verdict,
+                json_extract(j.value, '$.attempts') AS attempts,
+                json_extract(j.value, '$.durationMs') AS durationMs
+         FROM runs,
+              json_each(runs.state_json, '$.stateOutcomes') AS o,
+              json_each(o.value, '$.steps') AS j`,
+      )
+      .all() as unknown as Array<{
+        state: unknown
+        step: unknown
+        verdict: unknown
+        attempts: unknown
+        durationMs: unknown
+      }>
+    const failedSteps = db
+      .prepare(
+        `SELECT json_extract(j.value, '$.state') AS state,
+                json_extract(j.value, '$.step') AS step,
+                json_extract(j.value, '$.attempts') AS attempts
+         FROM runs, json_each(runs.state_json, '$.failedSteps') AS j`,
+      )
+      .all() as unknown as Array<{ state: unknown; step: unknown; attempts: unknown }>
     return {
       byStatus: byStatus.map((row) => ({ status: row.status, count: row.n })),
-      runs: runs.map((row) => ({ startedAt: row.started_at, finishedAt: row.finished_at })),
+      runs: runs.map((row) => ({ startedAt: row.started_at, finishedAt: row.finished_at, status: row.status })),
       stateVerdicts: stateVerdicts
         .filter((row) => typeof row.state === 'string' && typeof row.verdict === 'string')
         .map((row) => ({ state: row.state, verdict: row.verdict, count: row.n })),
+      steps: steps.flatMap((row) => {
+        if (typeof row.state !== 'string' || typeof row.step !== 'string') return []
+        return [{
+          state: row.state,
+          step: row.step,
+          verdict: typeof row.verdict === 'string' ? row.verdict : null,
+          attempts: typeof row.attempts === 'number' ? row.attempts : null,
+          durationMs: typeof row.durationMs === 'number' ? row.durationMs : null,
+        }]
+      }),
+      failedSteps: failedSteps.flatMap((row) => {
+        if (typeof row.state !== 'string' || typeof row.step !== 'string') return []
+        return [{
+          state: row.state,
+          step: row.step,
+          attempts: typeof row.attempts === 'number' ? row.attempts : null,
+        }]
+      }),
     }
   }
 
