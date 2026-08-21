@@ -125,6 +125,8 @@ export interface StepExecutor {
     ctx: StepContext
     /** Evidence the attacker/judge may read (defender output). */
     evidence?: string
+    /** Skill names (kebab-case) this step's subagent may load via `skill`. */
+    skills?: string[]
     parent: Agent
     signal: AbortSignal
     /** Per-step timeout override in ms; undefined uses the plugin default. */

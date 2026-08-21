@@ -19,6 +19,7 @@ export const agentDefinitionSchema = z.object({
   taskModes: z.array(z.string().min(1)).max(16).default([]),
   temperature: z.number().optional(),
   allowedTools: z.array(z.string()).optional(),
+  skills: z.array(z.string().min(1)).optional(),
   capabilities: z.array(z.string()).default([]),
   systemPrompt: z.string().min(1),
   constraints: z.array(z.string()).optional(),

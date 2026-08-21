@@ -41,4 +41,23 @@ describe('toolFilterFor', () => {
     expect(toolFilterFor(undefined, allAvailable)).toBeUndefined()
     expect(toolFilterFor([], allAvailable)).toBeUndefined()
   })
+
+  it('grants the skill tool for declared skills that resolve', () => {
+    const skills = ['ace-workflow', 'missing-skill']
+    const isSkillAvailable = (name: string): boolean => name === 'ace-workflow'
+    expect(toolFilterFor(['Read'], allAvailable, skills, isSkillAvailable)?.allow).toEqual(['read', 'skill'])
+  })
+
+  it('resolves a skill name inside allowedTools to the skill tool', () => {
+    const isSkillAvailable = (name: string): boolean => name === 'ace-workflow'
+    expect(toolFilterFor(['Read', 'ace-workflow'], allAvailable, [], isSkillAvailable)?.allow).toEqual([
+      'read',
+      'skill',
+    ])
+  })
+
+  it('omits the skill tool when no declared skill resolves', () => {
+    expect(toolFilterFor(['Read'], allAvailable, ['missing-skill'], () => false)?.allow).toEqual(['read'])
+    expect(toolFilterFor([], allAvailable, ['missing-skill'], () => false)).toBeUndefined()
+  })
 })

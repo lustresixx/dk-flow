@@ -37,6 +37,8 @@ export interface AgentDefinition {
   temperature?: number
   /** ACE tool names; mapped to DSH tool filters when the catalog is resolved. */
   allowedTools?: string[]
+  /** ACE skill names the role may load via the `skill` tool (kebab-case). */
+  skills?: string[]
   capabilities?: string[]
   systemPrompt: string
   constraints?: string[]

@@ -282,6 +282,7 @@ export async function executeStateStep(input: {
         preCommands: step.preCommands ?? [],
         ctx: context,
         evidence,
+        skills: step.skills ?? [],
         parent: options.parent,
         signal: options.signal,
         timeoutMs: stepTimeoutMs(step),

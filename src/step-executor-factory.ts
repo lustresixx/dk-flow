@@ -105,28 +105,61 @@ const ACE_TOOL_MAP: Record<string, readonly string[]> = {
   Grep: ['grep', 'glob'],
   WebSearch: ['web_search'],
   WebFetch: ['web_fetch'],
+  // Skills load through the single model-facing `skill` tool: a role/step
+  // that declares a skill name (or the generic `Skill` token) is granted
+  // that tool, and the step prompt names the exact skills to load.
+  Skill: ['skill'],
 }
 
 /**
  * Translate an ACE agent's allowedTools roster into a DSH tool allow-list.
  * Each ACE name resolves to the first DSH candidate that `isAvailable`
  * reports — deployments differ, e.g. Windows profiles register `pwsh`
- * instead of `bash`. Unmapped or unavailable names are skipped; an empty
- * result means no filter.
+ * instead of `bash`. Skill names (anything not in the tool map that
+ * `isSkillAvailable` reports) resolve to the `skill` tool, so a role can be
+ * granted skill access through the same roster. Unmapped or unavailable
+ * names are skipped; an empty result means no filter.
  */
 export function toolFilterFor(
   allowedTools: readonly string[] | undefined,
   isAvailable: (name: string) => boolean = () => true,
+  skills: readonly string[] = [],
+  isSkillAvailable: (name: string) => boolean = () => false,
 ): ToolRestriction | undefined {
-  if (!allowedTools || allowedTools.length === 0) return undefined
+  if ((!allowedTools || allowedTools.length === 0) && skills.length === 0) return undefined
   const allow = new Set<string>()
-  for (const name of allowedTools) {
+  for (const name of allowedTools ?? []) {
     const candidates = ACE_TOOL_MAP[name]
-    if (!candidates) continue
-    const resolved = candidates.find(isAvailable)
-    if (resolved) allow.add(resolved)
+    if (candidates) {
+      const resolved = candidates.find(isAvailable)
+      if (resolved) allow.add(resolved)
+    } else if (isSkillAvailable(name)) {
+      allow.add('skill')
+    }
+  }
+  for (const name of skills) {
+    if (isSkillAvailable(name)) allow.add('skill')
   }
   return allow.size > 0 ? { allow: [...allow] } : undefined
+}
+
+/** Skill-registry face the executor reads (optional; absent = no skills). */
+interface SkillRegistryFace {
+  list(options?: { cwd?: string; signal?: AbortSignal }): Promise<Array<{ name: string }>>
+}
+
+/** The kebab-case names of skills visible to a given workspace cwd. */
+async function availableSkillNames(ctx: Context, cwd?: string): Promise<Set<string>> {
+  const registry = ctx.get('skills') as SkillRegistryFace | undefined
+  if (!registry) return new Set()
+  try {
+    const listed = await registry.list(cwd ? { cwd } : {})
+    return new Set(listed.map((skill) => skill.name))
+  } catch {
+    // Skill discovery is advisory: a listing failure just means no skill
+    // grants resolve, never a step failure.
+    return new Set()
+  }
 }
 
 /** Extract plain text from LLM content blocks. */
@@ -197,8 +230,20 @@ export function makeStepExecutor(
         config.preCommandTimeoutMs,
         input.signal,
       )
+      // Skills: role catalog + step override, deduplicated and resolved to
+      // the ones actually visible in the workspace. The prompt names them so
+      // the subagent loads each before acting; the tool filter grants `skill`.
+      const declaredSkills = [...new Set([...(agentDef?.skills ?? []), ...(input.skills ?? [])])]
+      const skillNames =
+        declaredSkills.length > 0 ? await availableSkillNames(ctx, input.ctx.projectRoot) : new Set<string>()
+      const skills = declaredSkills.filter((name) => skillNames.has(name))
+      const skillPrompt =
+        skills.length > 0
+          ? `## 需加载的 Skill\n任务开始前，先调用 \`skill\` 工具逐一加载并遵循以下技能的完整指令（已加入你的可用工具列表）：\n${skills.map((name) => `- ${name}`).join('\n')}\n\n`
+          : ''
       const promptText =
         (systemPrompt ? `## 角色设定\n${systemPrompt}\n\n` : '') +
+        skillPrompt +
         (preOutput !== '' ? `## 预命令输出\n${preOutput}\n\n` : '') +
         buildStepPrompt({
           role: input.role,
@@ -245,7 +290,12 @@ export function makeStepExecutor(
         outputSchema: wantsSchema ? VERDICT_OUTPUT_SCHEMA : undefined,
         toolFilter:
           providerCaps?.toolFilter === true
-            ? toolFilterFor(agentDef?.allowedTools, (name) => ctx.tools.get(name) !== undefined)
+            ? toolFilterFor(
+                agentDef?.allowedTools,
+                (name) => ctx.tools.get(name) !== undefined,
+                skills,
+                (name) => skills.includes(name),
+              )
             : undefined,
       }
       ctx.emit('ace/step-start', {

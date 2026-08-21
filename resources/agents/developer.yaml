@@ -11,6 +11,7 @@ activeEngine: ""
 engineModels: {}
 temperature: 0.2
 allowedTools: [Bash, Read, Write, Edit, Glob, Grep]
+skills: [ace-workflow]
 capabilities:
   - 功能实现
   - 缺陷修复
