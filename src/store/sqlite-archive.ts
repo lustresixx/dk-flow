@@ -13,7 +13,7 @@ import { DatabaseSync } from 'node:sqlite'
 import type { RunState } from '../engine/types.js'
 import { effectiveStepDurationMs } from './audit-events.js'
 import { runDir, runsRoot, runStateDir } from './paths.js'
-import { normalizeRunStatus } from './run-store.js'
+import { isPidAlive, normalizeRunStatus } from './run-store.js'
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS runs (
@@ -344,11 +344,17 @@ export class SqliteArchive {
     // (aggregateWorkspaceStats counts `runs`, not this map), so the two can
     // never disagree about a zombie run.
     const runs = db
-      .prepare('SELECT started_at, finished_at, status, updated_at FROM runs')
-      .all() as unknown as Array<{ started_at: string; finished_at: string | null; status: string; updated_at: string }>
+      .prepare("SELECT started_at, finished_at, status, updated_at, json_extract(state_json, '$.pid') AS pid FROM runs")
+      .all() as unknown as Array<{
+        started_at: string
+        finished_at: string | null
+        status: string
+        updated_at: string
+        pid: number | null
+      }>
     const statusCounts = new Map<string, number>()
     for (const row of runs) {
-      const status = normalizeRunStatus(row.status, row.updated_at, now)
+      const status = normalizeRunStatus(row.status, row.updated_at, now, row.pid !== null && isPidAlive(row.pid))
       statusCounts.set(status, (statusCounts.get(status) ?? 0) + 1)
     }
     const stateVerdicts = db
@@ -397,8 +403,9 @@ export class SqliteArchive {
         finishedAt: row.finished_at,
         // Same stale rule as the file scan (P1-2): abandoned non-terminal
         // runs count as `crashed`, exactly like the JSON feed's
-        // `normalizeStaleRun`, so /stats cannot split by feed.
-        status: normalizeRunStatus(row.status, row.updated_at, now),
+        // `normalizeStaleRun`, so /stats cannot split by feed. A live pid
+        // keeps a slow-but-alive run `running`.
+        status: normalizeRunStatus(row.status, row.updated_at, now, row.pid !== null && isPidAlive(row.pid)),
       })),
       stateVerdicts: stateVerdicts
         .filter((row) => typeof row.state === 'string' && typeof row.verdict === 'string')

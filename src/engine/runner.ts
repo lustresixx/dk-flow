@@ -59,6 +59,7 @@ export function createRunState(options: {
       workspaceMode: options.config.context?.workspaceMode,
     },
     parentSessionId: options.parentSessionId,
+    pid: process.pid,
   }
 }
 
@@ -89,6 +90,9 @@ export async function runStateMachine(options: EngineRunOptions): Promise<RunRes
   if (terminal.includes(state.status)) {
     throw new EngineError(`运行 ${state.id} 已处于终态 ${state.status}，无法继续`, 'NO_MATCH')
   }
+  // The process that (re)starts this run is the live owner: refresh the pid so
+  // a resume under a new process is not misread as abandoned by the old one.
+  state.pid = process.pid
 
   const persist = async (): Promise<void> => {
     state.updatedAt = now()

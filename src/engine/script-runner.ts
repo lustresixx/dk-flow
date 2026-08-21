@@ -17,6 +17,8 @@ import { Worker } from 'node:worker_threads'
 export interface ScriptNodeInput {
   requirements: string
   state: string
+  /** Workspace project root (from the workflow context), for file access. */
+  projectRoot?: string
   priorStepEvidence: string
   priorStateEvidence: string
   inputs: Record<string, string>
@@ -68,6 +70,7 @@ parentPort.on('message', (msg) => {
       context: Object.freeze({
         requirements: msg.input.requirements,
         state: msg.input.state,
+        projectRoot: msg.input.projectRoot,
         priorStepEvidence: msg.input.priorStepEvidence,
         priorStateEvidence: msg.input.priorStateEvidence,
         inputs: Object.freeze(Object.assign({}, msg.input.inputs)),

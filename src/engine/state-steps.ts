@@ -199,6 +199,7 @@ export async function executeStateStep(input: {
     const scriptInput = {
       requirements: run.context.requirements || run.inputs.requirements || '',
       state: machineState.name,
+      projectRoot: run.context.projectRoot,
       priorStepEvidence: buildStepEvidence(completedSteps),
       priorStateEvidence: buildStateEvidence(run.stateOutcomes),
       inputs: run.inputs,
@@ -293,6 +294,7 @@ export async function executeStateStep(input: {
             parent: options.parent,
             signal: options.signal,
             inheritedRequirements: run.context.requirements ?? '',
+            inheritedProjectRoot: run.context.projectRoot,
           }),
         resolveStepRetry(step, options.config.workflow),
         options.signal,

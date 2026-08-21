@@ -67,16 +67,35 @@ export const STALE_RUN_MS = 10 * 60_000
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'stopped', 'crashed'])
 
+/** True when a process id refers to a live process on this machine. */
+export function isPidAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    // EPERM means the process exists but we lack signal permission — alive.
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
 /**
  * Normalize ONE run status for display/stats (P1-2): a non-terminal run whose
- * `updatedAt` is older than the staleness bound was abandoned by a dead
- * process and reads as `crashed`. THE single stale rule — shared by the JSON
- * store scan (`normalizeStaleRun`) and the SQLite archive's stats projection,
- * so both feed adapters count zombie runs identically instead of diverging
- * (`crashed` on the file feed vs `running` on the SQL feed).
+ * `updatedAt` is older than the staleness bound AND whose owning process is
+ * gone was abandoned and reads as `crashed`. A live pid keeps the run
+ * `running` even when a long step has not persisted recently — a slow step is
+ * not a crash. THE single stale rule — shared by the JSON store scan
+ * (`normalizeStaleRun`) and the SQLite archive's stats projection, so both
+ * feed adapters count zombie runs identically instead of diverging.
  */
-export function normalizeRunStatus(status: string, updatedAt: string, now = Date.now()): RunState['status'] {
+export function normalizeRunStatus(
+  status: string,
+  updatedAt: string,
+  now = Date.now(),
+  pidAlive = false,
+): RunState['status'] {
   if (TERMINAL_STATUSES.has(status)) return status as RunState['status']
+  if (pidAlive) return status as RunState['status']
   const updated = Date.parse(updatedAt)
   if (Number.isFinite(updated) && now - updated > STALE_RUN_MS) return 'crashed'
   return status as RunState['status']
@@ -84,18 +103,23 @@ export function normalizeRunStatus(status: string, updatedAt: string, now = Date
 
 /**
  * Normalize a loaded run state for display: a non-terminal run whose
- * `updatedAt` is older than the staleness bound was abandoned by a dead
- * process. Its status reads as `crashed` (without touching the stored
- * file, so `/workflow resume` keeps working), keeping zombie `running`
- * entries out of live discovery.
+ * `updatedAt` is older than the staleness bound AND whose owning process is
+ * gone was abandoned. Its status reads as `crashed` (without touching the
+ * stored file, so `/workflow resume` keeps working), keeping zombie `running`
+ * entries out of live discovery while never misreading a live long step.
  */
-export function normalizeStaleRun(state: RunState, now = Date.now()): RunState {
-  const status = normalizeRunStatus(state.status, state.updatedAt, now)
+export function normalizeStaleRun(
+  state: RunState,
+  now = Date.now(),
+  isAlive: (pid: number) => boolean = isPidAlive,
+): RunState {
+  const pidAlive = state.pid !== undefined && isAlive(state.pid)
+  const status = normalizeRunStatus(state.status, state.updatedAt, now, pidAlive)
   if (status === state.status) return state
   return {
     ...state,
     status,
-    error: '运行中断（进程重启或长时间无更新），可用 /workflow resume 恢复',
+    error: '运行中断（进程已退出或长时间无更新），可用 /workflow resume 恢复',
   }
 }
 

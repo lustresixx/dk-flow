@@ -136,6 +136,29 @@ export function Workbench(props: WorkbenchProps): JSX.Element {
     [props],
   )
 
+  /** Delete a workflow instance directly via REST (no agent round-trip). */
+  const deleteDirect = useCallback(
+    async (workspacePath: string, fileName: string): Promise<void> => {
+      try {
+        const response = await fetch(
+          `/plugins/dsh-ace-harness/workflows/${encodeURIComponent(fileName)}?workspace=${encodeURIComponent(workspacePath)}`,
+          { method: 'DELETE' },
+        )
+        if (!response.ok) {
+          setNotice(`删除失败：${await response.text()}`)
+          return
+        }
+        setNotice(`已删除工作流 ${fileName}`)
+        setWorkflow(null)
+        setTab('workflows')
+        void refresh()
+      } catch (err) {
+        setNotice(`删除失败：${(err as Error).message}`)
+      }
+    },
+    [],
+  )
+
   const openEditor = useCallback(
     async (workspacePath: string, fileName: string): Promise<void> => {
       try {
@@ -385,6 +408,7 @@ export function Workbench(props: WorkbenchProps): JSX.Element {
                 workspacePath={workflow.workspacePath}
                 submit={submit}
                 onRun={runDirect}
+                onDelete={deleteDirect}
                 onEdit={(fileName) => { void openEditor(workflow.workspacePath, fileName) }}
               />
             ) : tab === 'runs' && archiveDetail ? (
@@ -548,6 +572,7 @@ function WorkflowDetail(props: {
   workspacePath: string
   submit: (text: string) => Promise<void>
   onRun: (workspacePath: string, workflowRef: string, values: Record<string, string>) => void
+  onDelete: (workspacePath: string, fileName: string) => void
   onEdit: (fileName: string) => void
 }): JSX.Element {
   const { workflow } = props
@@ -587,7 +612,7 @@ function WorkflowDetail(props: {
         <button type="button" className={styles.secondary} onClick={() => { props.onEdit(workflow.fileName) }}>
           编排
         </button>
-        <button type="button" className={styles.danger} onClick={() => { void props.submit(`/workflow delete ${workflow.fileName}`) }}>
+        <button type="button" className={styles.danger} onClick={() => { props.onDelete(props.workspacePath, workflow.fileName) }}>
           删除
         </button>
       </div>

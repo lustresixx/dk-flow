@@ -541,7 +541,12 @@ export function makeStepExecutor(
           executor: childExecutor,
           signal: input.signal,
           load: () => loadRunState(workspace, childRunId, config.runDirName),
-          inputs: { requirements: input.inheritedRequirements },
+          inputs: {
+            requirements: input.inheritedRequirements,
+            ...(input.inheritedProjectRoot !== undefined && input.inheritedProjectRoot !== ''
+              ? { projectRoot: input.inheritedProjectRoot }
+              : {}),
+          },
         })
         childResult = await runStateMachine(childOptions)
       } catch (error) {

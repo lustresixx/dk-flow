@@ -373,6 +373,17 @@ export function apply(ctx: Context, config: Config): void {
             res.end(JSON.stringify({ ok: true, file: saved }))
             return
           }
+          if (req.method === 'DELETE') {
+            const deleted = await aceHarness.deleteWorkflowConfig(workspacePath, relative)
+            if (!deleted) {
+              res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+              res.end(`未找到 workflow「${relative}」`)
+              return
+            }
+            res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+            res.end(JSON.stringify({ ok: true }))
+            return
+          }
           res.writeHead(405, { 'content-type': 'text/plain; charset=utf-8' })
           res.end('method not allowed')
         } catch (error) {

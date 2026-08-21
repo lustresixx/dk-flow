@@ -173,16 +173,17 @@ export function registerTools(ctx: Context, service: AceHarnessService): void {
     defineTool({
       name: 'workflow_manage',
       description:
-        '管理 ACE 工作流与运行：action=runs 列运行记录；action=show 查看一个运行的完整状态与各步结论；action=resume 恢复暂停/中断的运行；action=stop 停止运行中的实例；action=create 从内置模板创建 workflow 实例（参数可留空，留空的必填参数会转为运行时询问字段；可 save 保存到工作区 .dsh/workflows）。resume 或 run 的等待被用户取消时，运行不会丢失——自动转为后台 job 继续执行，用 action=runs 查看最新 runId。',
+        '管理 ACE 工作流与运行：action=runs 列运行记录；action=show 查看一个运行的完整状态与各步结论；action=resume 恢复暂停/中断的运行；action=stop 停止运行中的实例；action=create 从内置模板创建 workflow 实例（参数可留空，留空的必填参数会转为运行时询问字段；可 save 保存到工作区 .dsh/workflows）；action=delete 删除工作区的 workflow 实例（fileName 必填）。resume 或 run 的等待被用户取消时，运行不会丢失——自动转为后台 job 继续执行，用 action=runs 查看最新 runId。',
       parameters: {
         action: {
           type: 'string',
-          description: 'runs | show | resume | stop | create',
+          description: 'runs | show | resume | stop | create | delete',
           required: true,
         },
         runId: { type: 'string', description: '运行 id（show/resume/stop 时必填）' },
         templateId: { type: 'string', description: '内置模板 id（create 时必填）' },
         file: { type: 'string', description: 'create 并 save 时的实例文件名，默认 <templateId>.yaml' },
+        fileName: { type: 'string', description: '要删除的 workflow 实例文件名（delete 时必填，可带 .yaml）' },
         params: { type: 'json', description: '模板参数（id → 值）' },
         save: { type: 'boolean', description: 'create 时是否保存为工作区 workflow 实例' },
         wait: { type: 'boolean', description: 'resume 时是否同步等待终态' },
@@ -274,8 +275,15 @@ export function registerTools(ctx: Context, service: AceHarnessService): void {
               yaml: instantiated.yamlText,
             }
           }
+          case 'delete': {
+            const fileName = args.fileName as string | undefined
+            if (!fileName) throw new Error('delete 需要 fileName')
+            const deleted = await service.deleteWorkflowConfig(workspace, fileName)
+            if (!deleted) throw new Error(`未找到 workflow 实例「${fileName}」`)
+            return { deleted: true, fileName }
+          }
           default:
-            throw new Error(`未知 action「${action}」：runs | show | resume | stop | create`)
+            throw new Error(`未知 action「${action}」：runs | show | resume | stop | create | delete`)
         }
       },
     }),

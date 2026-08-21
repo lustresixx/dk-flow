@@ -4,6 +4,7 @@ import { runScriptNode } from '../src/engine/script-runner.js'
 const input = {
   requirements: 'hello world',
   state: '测试',
+  projectRoot: 'C:/projects/demo',
   priorStepEvidence: '前序产出',
   priorStateEvidence: '前序状态产出',
   inputs: { a: '1' },
@@ -59,6 +60,12 @@ describe('runScriptNode', () => {
     expect(result.success).toBe(true)
     expect(result.output).toContain('1')
     expect(result.output).toContain('log line')
+  })
+
+  it('exposes the project root on the script context', async () => {
+    const result = await runScriptNode('return { output: context.projectRoot ?? "缺失", success: true }', input)
+    expect(result.success).toBe(true)
+    expect(result.output).toBe('C:/projects/demo')
   })
 
   it('exposes upstream stepData and carries a data payload through', async () => {

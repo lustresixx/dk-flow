@@ -109,6 +109,13 @@ export interface RunState {
   }
   /** DSH session id of the invoking agent (resume authority). */
   parentSessionId?: string
+  /**
+   * Process id that last executed this run. The stale-run normalization uses
+   * it to tell a live-but-slow run apart from one abandoned by a dead process:
+   * a non-terminal run whose pid is still alive is NOT marked crashed, no
+   * matter how long its current step takes to persist.
+   */
+  pid?: number
 }
 
 /** Terminal result of a whole run. */
@@ -172,6 +179,8 @@ export interface StepExecutor {
     parent: Agent
     signal: AbortSignal
     inheritedRequirements: string
+    /** Parent workflow's project root, inherited by the child config. */
+    inheritedProjectRoot?: string
   }): Promise<{ outcome: 'completed' | 'failed' | 'stopped' | 'crashed'; verdict?: StepVerdict }>
 
   /**
